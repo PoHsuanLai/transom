@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.quire
+Exec=/usr/libexec/transom
+SystemdService=transom.service

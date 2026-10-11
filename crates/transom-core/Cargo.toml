@@ -1,0 +1,18 @@
+[package]
+name = "transom-core"
+description = "The pure part of the quire desktop portal backend: the screen-cast session machine, restore tokens, the source choice, the inhibit book and the settings values. No D-Bus, no PipeWire, no Wayland."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

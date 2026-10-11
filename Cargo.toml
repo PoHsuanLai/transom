@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+# transom-core is pure (no D-Bus, no PipeWire, no Wayland); transom holds the D-Bus services, the
+# capture sources and the PipeWire sink behind seams. scripts/check-boundary.sh checks the edge.
+members = ["crates/transom-core", "crates/transom"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+# The same floor as the rest of the program; the toolchain itself is pinned in rust-toolchain.toml.
+rust-version = "1.92"
+repository = "https://github.com/PoHsuanLai/transom"
+publish = false
+
+[workspace.dependencies]
+transom-core = { path = "crates/transom-core" }
+
+thiserror = "2"
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "env-filter"] }
+# Capture of outputs and single windows: ext-image-capture-source and ext-image-copy-capture.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
+# The PipeWire client (MIT). Needs the libpipewire development files to build.
+pipewire = "0.10"
+# PNG encoding for Screenshot (MIT OR Apache-2.0).
+image = { version = "0.25.6", default-features = false, features = ["png"] }
+proptest = "1"
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+missing_debug_implementations = "warn"

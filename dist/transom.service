@@ -1,0 +1,15 @@
+[Unit]
+Description=Screen sharing, screenshots and settings for apps
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.quire
+ExecStart=/usr/libexec/transom
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
