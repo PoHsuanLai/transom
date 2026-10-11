@@ -40,6 +40,7 @@ fn the_file_store_round_trips_a_book_and_a_missing_file_is_empty() {
 }
 
 #[test]
+#[ignore = "needs a PipeWire daemon; the jailed portal chain (dev/accept/screencast-*.sh) runs it"]
 fn the_pipewire_sink_accepts_a_run_of_frames() {
     let size = PhysicalSizeWire {
         width: 64,
