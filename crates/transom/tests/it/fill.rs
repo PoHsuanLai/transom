@@ -16,7 +16,6 @@ fn the_desktop_appearance_reads_without_error() {
 }
 
 #[test]
-#[ignore = "P2-T2"]
 fn the_file_store_round_trips_a_book_and_a_missing_file_is_empty() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = FileStore::new(dir.path().join("restore"));
@@ -42,7 +41,6 @@ fn the_file_store_round_trips_a_book_and_a_missing_file_is_empty() {
 }
 
 #[test]
-#[ignore = "P2-T2"]
 fn the_pipewire_sink_accepts_a_run_of_frames() {
     let size = PhysicalSizeWire {
         width: 64,

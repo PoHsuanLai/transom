@@ -4,5 +4,8 @@
 mod capture;
 mod chooser;
 mod fill;
+mod options;
+mod pixels;
+mod restore_file;
 mod session;
 mod stream;

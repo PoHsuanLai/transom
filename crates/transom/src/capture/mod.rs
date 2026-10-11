@@ -8,10 +8,13 @@
 mod fake;
 pub mod output;
 pub mod toplevel;
+mod wl;
 
+use std::net::Shutdown;
 use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
 
-use transom_core::CastSource;
+use transom_core::{CastSource, CursorMode};
 
 pub use fake::FakeCapture;
 
@@ -114,11 +117,44 @@ pub trait CaptureSource: Send + std::fmt::Debug {
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError>;
     /// The size the next frame will have.
     fn size(&self) -> PhysicalSizeWire;
+    /// A handle that makes a [`CaptureSource::frame`] call that is blocked return an error, from
+    /// any thread. `None` for a source that never blocks.
+    fn canceller(&self) -> Option<Canceller> {
+        None
+    }
 }
 
-/// Which display socket to connect to.
+/// Unblocks a capture that is waiting for a frame by closing its connection.
+#[derive(Debug)]
+pub struct Canceller(UnixStream);
+
+impl Canceller {
+    /// A canceller for the connection behind `fd` (a duplicate of its socket).
+    pub fn new(fd: OwnedFd) -> Self {
+        Self(UnixStream::from(fd))
+    }
+
+    /// Close the connection. The capture's blocked call returns an error and later calls fail.
+    pub fn cancel(&self) {
+        let _ = self.0.shutdown(Shutdown::Both);
+    }
+}
+
+/// Every output and window that can be captured now, as the compositor lists them.
+pub fn live_sources(display: &DisplayName) -> Result<Vec<CastSource>, CaptureError> {
+    wl::Link::connect(display)?.live_sources()
+}
+
+/// Which display socket to connect to: empty for the session's own, else an absolute socket path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DisplayName(pub String);
+
+impl DisplayName {
+    /// The session's own display, found the way Wayland clients find theirs. The name is empty.
+    pub fn session() -> Self {
+        Self(String::new())
+    }
+}
 
 /// The real capture source: a client of the compositor's image-capture protocols.
 #[derive(Debug)]
@@ -133,14 +169,24 @@ enum ExtKind {
 }
 
 impl ExtCapture {
-    /// Connect to `display` and start capturing `source`.
+    /// Connect to `display` and start capturing `source`, with the pointer left out.
     pub fn open(display: &DisplayName, source: &CastSource) -> Result<Self, CaptureError> {
+        Self::open_with(display, source, CursorMode::Hidden)
+    }
+
+    /// As [`ExtCapture::open`], with the pointer drawn into the picture when `cursor` is
+    /// [`CursorMode::Embedded`]. The metadata mode captures without the pointer.
+    pub fn open_with(
+        display: &DisplayName,
+        source: &CastSource,
+        cursor: CursorMode,
+    ) -> Result<Self, CaptureError> {
         let inner = match source {
             CastSource::Output(name) => {
-                ExtKind::Output(output::OutputCapture::open(display, name)?)
+                ExtKind::Output(output::OutputCapture::open_with(display, name, cursor)?)
             }
             CastSource::Window(id) => {
-                ExtKind::Toplevel(toplevel::ToplevelCapture::open(display, id)?)
+                ExtKind::Toplevel(toplevel::ToplevelCapture::open_with(display, id, cursor)?)
             }
             // A kind of source a later transom-core adds and this capture does not know.
             _ => return Err(CaptureError::Unsupported),
@@ -161,6 +207,13 @@ impl CaptureSource for ExtCapture {
         match &self.inner {
             ExtKind::Output(c) => c.size(),
             ExtKind::Toplevel(c) => c.size(),
+        }
+    }
+
+    fn canceller(&self) -> Option<Canceller> {
+        match &self.inner {
+            ExtKind::Output(c) => c.canceller(),
+            ExtKind::Toplevel(c) => c.canceller(),
         }
     }
 }

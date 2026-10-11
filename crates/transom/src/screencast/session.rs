@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use transom_core::{
-    CastIn, CastOut, CastSession, CursorMode, PersistMode,
+    CastIn, CastOut, CastSession, CursorMode, PersistMode, RestoreToken,
     choice::{Multiple, SourceKinds},
     step,
 };
@@ -23,6 +23,8 @@ pub struct Selection {
     pub cursor_modes: Vec<CursorMode>,
     /// Whether to hand back a restore token.
     pub persist: PersistMode,
+    /// The restore token the app brought, if it brought one of ours.
+    pub restore: Option<RestoreToken>,
 }
 
 /// One session.

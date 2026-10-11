@@ -6,7 +6,7 @@
 
 use std::sync::Mutex;
 
-use transom_core::{CastSource, Choice, ChoiceRequest, CursorMode};
+use transom_core::{CastSource, Choice, ChoiceRequest, CursorMode, Multiple};
 
 use crate::BoxFuture;
 
@@ -75,12 +75,70 @@ impl Chooser for ShellChooser {
         request: &'a ChoiceRequest,
     ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>> {
         Box::pin(async move {
-            let _ = request;
-            todo!(
-                "P2-T2-CH: call Shell1Proxy::pick_capture_source and map the answer with source_from_wire"
-            )
+            let connection = zbus::Connection::session().await.map_err(call_failed)?;
+            let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
+            let cursor_modes = request.cursor_modes.iter().map(|m| m.to_wire()).collect();
+            let asked = proxy
+                .pick_capture_source(
+                    &request.app_label,
+                    request.kinds.to_wire(),
+                    multiple_to_wire(request.multiple),
+                    cursor_modes,
+                )
+                .await;
+            match asked {
+                Ok((sources, cursor)) => answer_from_wire(&sources, cursor),
+                Err(error) if nobody_answers(&error) => Err(ChooserError::Unavailable),
+                Err(error) => Err(call_failed(error)),
+            }
         })
     }
+}
+
+/// The wire value of [`Multiple`]: 0 for one source, 1 for several.
+fn multiple_to_wire(multiple: Multiple) -> u32 {
+    match multiple {
+        Multiple::One => 0,
+        _ => 1,
+    }
+}
+
+fn call_failed(error: zbus::Error) -> ChooserError {
+    ChooserError::Call(error.to_string())
+}
+
+/// Whether the bus said the shell is not there (no owner, or nothing that can be started).
+fn nobody_answers(error: &zbus::Error) -> bool {
+    const GONE: [&str; 2] = [
+        "org.freedesktop.DBus.Error.ServiceUnknown",
+        "org.freedesktop.DBus.Error.NameHasNoOwner",
+    ];
+    match error {
+        zbus::Error::MethodError(name, _, _) => GONE.contains(&name.as_str()),
+        zbus::Error::FDO(inner) => matches!(
+            **inner,
+            zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_)
+        ),
+        _ => false,
+    }
+}
+
+/// Turn the shell's answer into a [`Choice`]. An empty list is a cancel (`Ok(None)`); a source of
+/// an unknown kind or a cursor value that is not one of the three modes is a bad answer.
+pub fn answer_from_wire(
+    sources: &[(String, String)],
+    cursor: u32,
+) -> Result<Option<Choice>, ChooserError> {
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    let sources = sources
+        .iter()
+        .map(|(kind, name)| source_from_wire(kind, name))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ChooserError::BadAnswer)?;
+    let cursor = CursorMode::from_wire(cursor).ok_or(ChooserError::BadAnswer)?;
+    Ok(Some(Choice { sources, cursor }))
 }
 
 /// Map one wire source to a [`CastSource`]; `None` for a kind we do not know.
