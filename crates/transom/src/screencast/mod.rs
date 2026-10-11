@@ -4,20 +4,25 @@
 //! reads the node the reply names. The decisions are `transom_core::step` on a [`session::SessionBook`];
 //! this interface moves the wire values in and out and drives the seams.
 
+mod flow;
+pub mod options;
 pub mod pipewire;
 pub use self::pipewire::PipewireSink;
+pub mod pixels;
 pub mod restore;
+pub mod run;
 pub mod session;
 pub mod stream;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
 use crate::chooser::Chooser;
+use flow::Shared;
 use restore::RestoreStore;
-use session::SessionBook;
+use session::SessionKey;
 
 /// The wire shape of an options or results dictionary.
 pub type Dict = HashMap<String, OwnedValue>;
@@ -25,37 +30,64 @@ pub type Dict = HashMap<String, OwnedValue>;
 /// The served interface.
 #[derive(Debug)]
 pub struct ScreenCastService {
-    #[expect(dead_code, reason = "P2-T2")]
-    sessions: Mutex<SessionBook>,
-    #[expect(dead_code, reason = "P2-T2")]
-    chooser: Box<dyn Chooser>,
-    #[expect(dead_code, reason = "P2-T2")]
-    restore: Box<dyn RestoreStore>,
+    shared: Arc<Shared>,
 }
 
 impl ScreenCastService {
     /// A service with no sessions, asking `chooser` and keeping tokens in `restore`.
     pub fn new(chooser: Box<dyn Chooser>, restore: Box<dyn RestoreStore>) -> Self {
         Self {
-            sessions: Mutex::new(SessionBook::new()),
-            chooser,
-            restore,
+            shared: Arc::new(Shared::new(chooser, restore)),
         }
+    }
+}
+
+/// The object the portal frontend closes a session through, served at the session's path:
+/// `org.freedesktop.impl.portal.Session`.
+#[derive(Debug)]
+pub struct SessionObject {
+    key: SessionKey,
+    shared: Arc<Shared>,
+}
+
+#[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
+impl SessionObject {
+    /// The app, or the portal, ended the session: stop its streams.
+    async fn close(&self, #[zbus(connection)] connection: &zbus::Connection) {
+        self.shared.close(&self.key);
+        flow::forget_object(connection, &self.key).await;
     }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.ScreenCast")]
 impl ScreenCastService {
-    /// Open a session. `options` is empty today.
+    /// Open a session. `options` is empty today; the reply carries `session_id`.
     async fn create_session(
         &self,
         handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: &str,
         options: Dict,
+        #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> (u32, Dict) {
-        let _ = (handle, session_handle, app_id, options);
-        todo!("P2-T2: SessionBook::create; reply 0 and an empty dict")
+        let _ = (handle, options);
+        let key = SessionKey(session_handle.to_string());
+        if !self.shared.create(&key, app_id) {
+            return (2, Dict::new());
+        }
+        let object = SessionObject {
+            key: key.clone(),
+            shared: Arc::clone(&self.shared),
+        };
+        if server.at(session_handle.as_str(), object).await.is_err() {
+            self.shared.close(&key);
+            return (2, Dict::new());
+        }
+        let mut results = Dict::new();
+        if let Ok(id) = OwnedValue::try_from(zbus::zvariant::Value::new(key.0)) {
+            results.insert("session_id".to_owned(), id);
+        }
+        (0, results)
     }
 
     /// Record `types`, `multiple`, `cursor_mode`, `persist_mode` and `restore_data`.
@@ -66,8 +98,13 @@ impl ScreenCastService {
         app_id: &str,
         options: Dict,
     ) -> (u32, Dict) {
-        let _ = (handle, session_handle, app_id, options);
-        todo!("P2-T2: parse the options into a Selection; SessionBook::select")
+        let _ = handle;
+        let key = SessionKey(session_handle.to_string());
+        let selection = options::selection(&options);
+        match self.shared.select(&key, app_id, selection) {
+            true => (0, Dict::new()),
+            false => (2, Dict::new()),
+        }
     }
 
     /// Ask the person if the token did not resolve, open the stream, reply with `streams` and,
@@ -79,11 +116,14 @@ impl ScreenCastService {
         app_id: &str,
         parent_window: &str,
         options: Dict,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> (u32, Dict) {
-        let _ = (handle, session_handle, app_id, parent_window, options);
-        todo!(
-            "P2-T2: CastIn::Start, run the CastOuts: chooser, ExtCapture, PipewireSink, Pump thread"
-        )
+        let _ = (handle, parent_window, options);
+        let key = SessionKey(session_handle.to_string());
+        self.shared
+            .start(&key, app_id, connection)
+            .await
+            .into_wire()
     }
 
     /// The source types served: displays and windows (1 and 2).

@@ -4,6 +4,12 @@
 mod capture;
 mod chooser;
 mod fill;
+mod inhibit;
+mod options;
+mod pixels;
 mod remote_desktop;
+mod restore_file;
+mod screenshot;
 mod session;
+mod settings;
 mod stream;

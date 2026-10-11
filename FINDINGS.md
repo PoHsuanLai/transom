@@ -4,22 +4,11 @@ Open items and standing facts. An entry names the condition that closes it.
 
 ## Stubs behind frozen interfaces
 
-21 `todo!()` (P2-T3 filled `remote_desktop.rs`; its rows are gone), all in the `transom` crate; `transom-core` has none. The fill lanes are P2-T1 to
-P2-T3 and the chooser client (listed in the program's transom fill-lane notes).
+No `todo!()` left: P2-T1, P2-T2 (with the chooser client) and P2-T3 are filled.
 
-| File | Items | Lane | Proven by |
-| --- | --- | --- | --- |
-| `crates/transom/src/settings.rs` | `DesktopAppearance::current`, `SettingsService::read_all`, `read` (3) | P2-T1 | `tests/it/fill.rs::the_desktop_appearance_reads_without_error`, `dev/accept/settings.sh` |
-| `crates/transom/src/screenshot.rs` | `screenshot`, `pick_color` (2) | P2-T1 | `dev/accept/screenshot.sh` |
-| `crates/transom/src/inhibit.rs` | `inhibit`, `create_monitor`, `query_end_response` (3) | P2-T1 | `dev/accept/inhibit.sh` |
-| `crates/transom/src/screencast/mod.rs` | `create_session`, `select_sources`, `start` (3) | P2-T2 | `dev/accept/screencast-output.sh`, `screencast-window.sh` |
-| `crates/transom/src/screencast/pipewire.rs` | `PipewireSink::open`, `push`, `resize` (3) | P2-T2 | `tests/it/fill.rs::the_pipewire_sink_accepts_a_run_of_frames` |
-| `crates/transom/src/screencast/restore.rs` | `FileStore::load`, `save` (2) | P2-T2 | `tests/it/fill.rs::the_file_store_round_trips_a_book_and_a_missing_file_is_empty` |
-| `crates/transom/src/capture/output.rs` | `OutputCapture::open`, `frame` (2) | P2-T2 | `dev/accept/screencast-output.sh` |
-| `crates/transom/src/capture/toplevel.rs` | `ToplevelCapture::open`, `frame` (2) | P2-T2 | `dev/accept/screencast-window.sh` |
-| `crates/transom/src/chooser.rs` | `ShellChooser::pick` (1) | P2-T2 (chooser client) | `dev/accept/chooser.sh` |
+One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a PipeWire daemon; the jailed portal chain runs it.
 
-Ignored tests: P2-T1 1, P2-T2 2 (`crates/transom/tests/it/fill.rs`).
+One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a PipeWire daemon; the jailed portal chain runs it.
 
 ## Open items
 
@@ -27,19 +16,51 @@ Ignored tests: P2-T1 1, P2-T2 2 (`crates/transom/tests/it/fill.rs`).
    frozen here as the client (`chooser.rs`, the `Shell1` proxy): `(app_label: s, kinds: u,
    multiple: u, cursor_modes: au) -> (sources: a(ss), cursor: u)` on name `org.quire.Shell`, path
    `/org/quire/Shell1`. The shell serves it.
-2. **Settings source.** `DesktopAppearance` reads the desktop settings document. Reading it with
-   quire's `ds-settings` (v0.3.16, rev `b2dab9ce9b8cb2150b7050b4529d9479f659d3cf`) needs that
-   dependency in `crates/transom/Cargo.toml`; P2-T1 adds it there and nowhere else. `transom-core`
-   does not need it: the portal's contract is three keys.
-3. **Restore data shape.** The frontend passes `restore_data` as `(suv)` (vendor, version, data)
-   in current interface versions. P2-T2 checks it against the installed interface XML and uses
-   `("quire", 1, <token>)`; `RestoreToken` is the token.
+2. **Settings source.** `DesktopAppearance` reads `quire/appearance.toml` with a small parser of its
+   own (`settings::parse_appearance`: `theme` and `accent` in `[appearance]`; no contrast key exists
+   in the document yet). quire's `ds-settings` (v0.3.16) was not added: it pulls `ds-core`, `ds-style`
+   (with an image decoder), `chordkit`, `toml` and `notify`, a graph far heavier than three keys. The
+   eight accent colours are the macOS system values written into `settings.rs`; check them against
+   quire's token table. Changes are found by looking at the file every 2 seconds.
+3. **Restore data shape.** Checked against the installed interface XML (version 6): `restore_data`
+   is `(suv)`. transom writes `("quire", 1, <token as a string variant>)`; `RestoreToken` is the token.
+   Closed.
 4. **`UseIn=quire`** in `dist/quire.portal` matches `XDG_CURRENT_DESKTOP`; the session must set
    it to `quire`.
 5. **PipeWire needs its development files** to build the `pipewire` crate (libpipewire and clang).
-6. **Interface XML not re-read.** The method signatures of the five interfaces were written from
-   the portal documentation as remembered; the first fill lane diffs them against the installed
-   interface files and fixes any difference.
+6. **Interface XML re-read (P2-T1, portal 1.22).** Settings, Inhibit and the Screenshot methods match.
+   Differences found: Screenshot is version 3 and has an `AvailableTargets` property (now served,
+   value 1 = the whole screen; was version 2 without it); the Screenshot options `modal`,
+   `interactive`, `target` and `permission_store_checked` are read-only hints and are ignored.
+   `dist/` matches the installed `portals.conf(5)` and portal-file format. Still to re-read: ScreenCast
+   and RemoteDesktop (P2-T2, P2-T3).
+7. **Screenshot cannot list outputs.** `screenshot::OutputLayout` (which outputs exist, where) has only
+   `FixedLayout`; `main.rs` passes an empty one, so a screenshot is answered as failed until
+   `capture/` offers a listing (names and positions) for the real layout. The Inhibit effect talks to
+   the login manager on the system bus (`LogindInhibitor`); the compositor's idle-inhibit is not used.
+   `PickColor` answers as cancelled until the shell offers a picker.
+
+## ScreenCast (P2-T2) facts and asks
+
+- **Frame trigger.** The stream is cycle-driven: a frame is written only when one is waiting at the
+  next graph cycle. `Stream::trigger_process` (a driver stream that wakes on each captured frame)
+  needs the `pipewire` crate feature `v0_3_34`, which is a manifest edit; ask the orchestrator to
+  enable it, then drive the stream from `Pump`.
+- **Buffers.** Shared memory only on both sides. The compositor's GPU-buffer constraints are
+  ignored and a GPU frame is refused by the sink. Enabling them needs a render device and a
+  modifier negotiation (a later lane).
+- **Cursor.** Hidden and embedded work (embedded asks the compositor to paint the pointer). The
+  metadata mode captures without a pointer: no cursor metadata is sent yet.
+- **Display.** `DisplayName::session()` (an empty name) connects the way Wayland clients do;
+  a name is an absolute socket path. P2-T1's screenshot should use `DisplayName::session()`.
+- **Session object.** The service also serves `org.freedesktop.impl.portal.Session` at each
+  session path, so the frontend can close a session and the portal can announce `Closed`. The
+  `Request` object at a call's handle is not served yet, so a cancel of a pending Start through
+  the frontend is not seen.
+- **Persist modes 1 and 2** are stored alike; the frontend decides when a mode-1 token is no longer
+  handed back.
+- **Interface XML.** The ScreenCast signatures match the installed version-6 file; the interface
+  property `version` stays 5 because `pipewire-serial` is not sent.
 
 ## Standing facts
 

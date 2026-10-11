@@ -3,32 +3,50 @@
 //! publishes. The compositor sizes frames at logical size times scale and sends one only when the
 //! window changed.
 
-use super::{CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire};
+use transom_core::CursorMode;
+
+use super::wl::{Copier, Link};
+use super::{Canceller, CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire};
 
 /// A running capture of one window.
 #[derive(Debug)]
 pub struct ToplevelCapture {
-    size: PhysicalSizeWire,
+    copier: Copier,
 }
 
 impl ToplevelCapture {
-    /// Connect, find the toplevel with this identifier, create its capture source and session
-    /// (P2-T2). A window that is already gone is [`CaptureError::Ended`].
+    /// Connect, find the toplevel with this identifier, create its capture source and session.
+    /// A window that is already gone is [`CaptureError::Ended`]. The pointer is left out.
     pub fn open(display: &DisplayName, identifier: &str) -> Result<Self, CaptureError> {
-        let _ = (display, identifier);
-        todo!("P2-T2: ext-image-copy-capture session for a foreign toplevel")
+        Self::open_with(display, identifier, CursorMode::Hidden)
+    }
+
+    /// As [`ToplevelCapture::open`], with the pointer drawn into the picture when `cursor` is
+    /// [`CursorMode::Embedded`].
+    pub fn open_with(
+        display: &DisplayName,
+        identifier: &str,
+        cursor: CursorMode,
+    ) -> Result<Self, CaptureError> {
+        let mut link = Link::connect(display)?;
+        let source = link.toplevel_source(identifier)?;
+        Ok(Self {
+            copier: Copier::start(link, source, cursor)?,
+        })
     }
 }
 
 impl CaptureSource for ToplevelCapture {
+    /// The next frame. Blocks until the window changes; [`CaptureError::Ended`] once it closes.
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        let _ = &self.size;
-        todo!(
-            "P2-T2: wait for damage, capture, convert to CapturedFrame; Ended when the toplevel closes"
-        )
+        self.copier.frame()
     }
 
     fn size(&self) -> PhysicalSizeWire {
-        self.size
+        self.copier.size()
+    }
+
+    fn canceller(&self) -> Option<Canceller> {
+        self.copier.canceller()
     }
 }

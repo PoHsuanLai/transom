@@ -50,6 +50,8 @@ pub struct Parts {
     pub consent: Box<dyn remote_desktop::Consent>,
     /// Gets an input socket from the compositor for a remote-desktop session.
     pub eis: Box<dyn remote_desktop::EisHandout>,
+    /// Takes screenshots; without a setup every screenshot is answered as failed.
+    pub screenshots: screenshot::ScreenshotSetup,
 }
 
 impl Parts {
@@ -67,7 +69,14 @@ impl Parts {
                 chooser::ShellChooser::new(),
             ))),
             eis: Box::new(remote_desktop::CasementEis::new()),
+            screenshots: screenshot::ScreenshotSetup::unconfigured(),
         }
+    }
+
+    /// These parts with screenshots set up as `screenshots` says.
+    pub fn with_screenshots(mut self, screenshots: screenshot::ScreenshotSetup) -> Self {
+        self.screenshots = screenshots;
+        self
     }
 }
 
@@ -81,10 +90,14 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         appearance,
         consent,
         eis,
+        screenshots,
     } = parts;
     let connection = zbus::connection::Builder::session()?
         .name(BUS_NAME)?
-        .serve_at(PORTAL_PATH, screenshot::ScreenshotService::new())?
+        .serve_at(
+            PORTAL_PATH,
+            screenshot::ScreenshotService::with_setup(screenshots),
+        )?
         .serve_at(
             PORTAL_PATH,
             screencast::ScreenCastService::new(chooser, restore),
@@ -97,5 +110,6 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
         .build()
         .await?;
+    settings::spawn_watch(connection.clone());
     Ok(connection)
 }
