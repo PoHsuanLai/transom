@@ -25,50 +25,56 @@ impl InhibitService {
     }
 }
 
-#[zbus::interface(name = "org.freedesktop.impl.portal.Inhibit")]
-impl InhibitService {
-    /// Hold a request until its request object is closed.
-    async fn inhibit(
-        &self,
-        handle: ObjectPath<'_>,
-        app_id: &str,
-        window: &str,
-        flags: u32,
-        options: Dict,
-    ) {
-        let _ = (handle, app_id, window, flags, options);
-        todo!("P2-T1: InhibitBook::hold, release when the request object goes away")
-    }
+// The D-Bus interface lives in a private module: zbus's macro generates undocumented
+// property-change methods, which the crate's `missing_docs` would flag on a public impl.
+mod interface {
+    use super::*;
 
-    /// Start watching the session state (screen locked, idle); returns the response code.
-    async fn create_monitor(
-        &self,
-        handle: ObjectPath<'_>,
-        session_handle: ObjectPath<'_>,
-        app_id: &str,
-        window: &str,
-    ) -> u32 {
-        let _ = (handle, session_handle, app_id, window);
-        todo!("P2-T1: register the monitor session")
-    }
+    #[zbus::interface(name = "org.freedesktop.impl.portal.Inhibit")]
+    impl InhibitService {
+        /// Hold a request until its request object is closed.
+        async fn inhibit(
+            &self,
+            handle: ObjectPath<'_>,
+            app_id: &str,
+            window: &str,
+            flags: u32,
+            options: Dict,
+        ) {
+            let _ = (handle, app_id, window, flags, options);
+            todo!("P2-T1: InhibitBook::hold, release when the request object goes away")
+        }
 
-    /// An app answered the end-of-session query.
-    async fn query_end_response(&self, session_handle: ObjectPath<'_>) {
-        let _ = session_handle;
-        todo!("P2-T1: note the answer")
-    }
+        /// Start watching the session state (screen locked, idle); returns the response code.
+        async fn create_monitor(
+            &self,
+            handle: ObjectPath<'_>,
+            session_handle: ObjectPath<'_>,
+            app_id: &str,
+            window: &str,
+        ) -> u32 {
+            let _ = (handle, session_handle, app_id, window);
+            todo!("P2-T1: register the monitor session")
+        }
 
-    /// The session state changed (`screensaver-active`, `session-state`).
-    #[zbus(signal)]
-    async fn state_changed(
-        emitter: &SignalEmitter<'_>,
-        session_handle: ObjectPath<'_>,
-        state: Dict,
-    ) -> zbus::Result<()>;
+        /// An app answered the end-of-session query.
+        async fn query_end_response(&self, session_handle: ObjectPath<'_>) {
+            let _ = session_handle;
+            todo!("P2-T1: note the answer")
+        }
 
-    /// The interface version.
-    #[zbus(property, name = "version")]
-    fn version(&self) -> u32 {
-        3
+        /// The session state changed (`screensaver-active`, `session-state`).
+        #[zbus(signal)]
+        async fn state_changed(
+            emitter: &SignalEmitter<'_>,
+            session_handle: ObjectPath<'_>,
+            state: Dict,
+        ) -> zbus::Result<()>;
+
+        /// The interface version.
+        #[zbus(property, name = "version")]
+        fn version(&self) -> u32 {
+            3
+        }
     }
 }

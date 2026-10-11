@@ -72,34 +72,40 @@ impl SettingsService {
     }
 }
 
-#[zbus::interface(name = "org.freedesktop.impl.portal.Settings")]
-impl SettingsService {
-    /// Every setting in the namespaces the patterns select (none: all).
-    async fn read_all(&self, namespaces: Vec<String>) -> Namespaces {
-        let _ = namespaces;
-        todo!(
-            "P2-T1: transom_core::read_all, group by namespace, wrap each SettingValue in a Value"
-        )
-    }
+// The D-Bus interface lives in a private module: zbus's macro generates undocumented
+// property-change methods, which the crate's `missing_docs` would flag on a public impl.
+mod interface {
+    use super::*;
 
-    /// One setting; an unknown one is a `org.freedesktop.portal.Error.NotFound`.
-    async fn read(&self, namespace: &str, key: &str) -> zbus::fdo::Result<OwnedValue> {
-        let _ = (namespace, key);
-        todo!("P2-T1: transom_core::read; NotFound maps to the portal's error name")
-    }
+    #[zbus::interface(name = "org.freedesktop.impl.portal.Settings")]
+    impl SettingsService {
+        /// Every setting in the namespaces the patterns select (none: all).
+        async fn read_all(&self, namespaces: Vec<String>) -> Namespaces {
+            let _ = namespaces;
+            todo!(
+                "P2-T1: transom_core::read_all, group by namespace, wrap each SettingValue in a Value"
+            )
+        }
 
-    /// A setting changed.
-    #[zbus(signal)]
-    async fn setting_changed(
-        emitter: &SignalEmitter<'_>,
-        namespace: &str,
-        key: &str,
-        value: zbus::zvariant::Value<'_>,
-    ) -> zbus::Result<()>;
+        /// One setting; an unknown one is a `org.freedesktop.portal.Error.NotFound`.
+        async fn read(&self, namespace: &str, key: &str) -> zbus::fdo::Result<OwnedValue> {
+            let _ = (namespace, key);
+            todo!("P2-T1: transom_core::read; NotFound maps to the portal's error name")
+        }
 
-    /// The interface version.
-    #[zbus(property, name = "version")]
-    fn version(&self) -> u32 {
-        2
+        /// A setting changed.
+        #[zbus(signal)]
+        async fn setting_changed(
+            emitter: &SignalEmitter<'_>,
+            namespace: &str,
+            key: &str,
+            value: zbus::zvariant::Value<'_>,
+        ) -> zbus::Result<()>;
+
+        /// The interface version.
+        #[zbus(property, name = "version")]
+        fn version(&self) -> u32 {
+            2
+        }
     }
 }

@@ -142,6 +142,8 @@ impl ExtCapture {
             CastSource::Window(id) => {
                 ExtKind::Toplevel(toplevel::ToplevelCapture::open(display, id)?)
             }
+            // A kind of source a later transom-core adds and this capture does not know.
+            _ => return Err(CaptureError::Unsupported),
         };
         Ok(Self { inner })
     }

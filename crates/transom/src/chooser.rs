@@ -65,7 +65,7 @@ pub struct ShellChooser;
 impl ShellChooser {
     /// A chooser that connects to the session bus on first use.
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 
@@ -94,17 +94,17 @@ pub fn source_from_wire(kind: &str, name: &str) -> Option<CastSource> {
 
 /// The wire form of a source.
 pub fn source_to_wire(source: &CastSource) -> (&'static str, &str) {
-    match source {
-        CastSource::Output(name) => ("output", name),
-        CastSource::Window(id) => ("window", id),
-    }
+    source.wire()
 }
+
+/// One scripted answer: the sources and cursor picked, or `None` for a cancel.
+type Answer = Option<(Vec<CastSource>, CursorMode)>;
 
 /// A chooser that answers from a script: each call takes the next answer; when the script is
 /// empty the person cancels.
 #[derive(Debug, Default)]
 pub struct FakeChooser {
-    answers: Mutex<Vec<Option<(Vec<CastSource>, CursorMode)>>>,
+    answers: Mutex<Vec<Answer>>,
 }
 
 impl FakeChooser {

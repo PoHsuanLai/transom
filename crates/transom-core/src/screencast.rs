@@ -18,6 +18,21 @@ pub enum CastSource {
     Window(String),
 }
 
+impl CastSource {
+    /// The chooser's wire form: `("output", name)` or `("window", identifier)`.
+    ///
+    /// ```
+    /// use transom_core::screencast::CastSource;
+    /// assert_eq!(CastSource::Output("DP-1".into()).wire(), ("output", "DP-1"));
+    /// ```
+    pub fn wire(&self) -> (&'static str, &str) {
+        match self {
+            CastSource::Output(name) => ("output", name),
+            CastSource::Window(id) => ("window", id),
+        }
+    }
+}
+
 /// How the pointer appears in the shared picture. The wire values are the portal's: 1, 2, 4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]

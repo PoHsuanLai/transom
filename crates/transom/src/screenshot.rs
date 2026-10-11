@@ -11,7 +11,7 @@ pub struct ScreenshotService;
 impl ScreenshotService {
     /// A service.
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 
