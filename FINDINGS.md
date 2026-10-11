@@ -8,8 +8,6 @@ No `todo!()` left: P2-T1, P2-T2 (with the chooser client) and P2-T3 are filled.
 
 One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a PipeWire daemon; the jailed portal chain runs it.
 
-One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a PipeWire daemon; the jailed portal chain runs it.
-
 ## Open items
 
 1. **The shell side of the chooser does not exist yet.** `org.quire.Shell1.PickCaptureSource` is
