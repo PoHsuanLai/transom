@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use transom::capture::DisplayName;
 use transom::chooser::ShellChooser;
 use transom::screencast::restore::FileStore;
+use transom::screenshot::{ExtOpen, FixedLayout, OutputGrab, ScreenshotSetup};
 use transom::settings::DesktopAppearance;
 use transom::{Parts, serve};
 
@@ -16,8 +18,9 @@ async fn main() -> ExitCode {
     let parts = Parts::real(
         ShellChooser::new(),
         FileStore::new(state_file()),
-        DesktopAppearance::new(),
-    );
+        DesktopAppearance::at(appearance_file()),
+    )
+    .with_screenshots(screenshots());
     match serve(parts).await {
         Ok(_connection) => {
             std::future::pending::<()>().await;
@@ -39,4 +42,37 @@ fn state_file() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("transom").join("restore")
+}
+
+/// Where the desktop keeps its appearance: `$XDG_CONFIG_HOME/quire/appearance.toml`, or under
+/// `$HOME/.config`.
+fn appearance_file() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("quire").join("appearance.toml")
+}
+
+/// Screenshots: the compositor on `$WAYLAND_DISPLAY`, files in `$HOME/Pictures`, named with the
+/// time the portal started. The list of outputs is empty until the capture side can list them
+/// (see `FINDINGS.md`), so a screenshot is answered as failed until then.
+fn screenshots() -> ScreenshotSetup {
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_owned());
+    let pictures = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Pictures"))
+        .unwrap_or_default();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_default();
+    ScreenshotSetup::new(
+        Box::new(OutputGrab::new(
+            Box::new(FixedLayout::default()),
+            Box::new(ExtOpen(DisplayName(display))),
+        )),
+        pictures,
+        stamp,
+    )
 }

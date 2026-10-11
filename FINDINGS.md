@@ -4,17 +4,14 @@ Open items and standing facts. An entry names the condition that closes it.
 
 ## Stubs behind frozen interfaces
 
-22 `todo!()`, all in the `transom` crate; `transom-core` has none. The fill lanes are P2-T1 and
-P2-T3 (P2-T2 and the chooser client are filled) (listed in the program's transom fill-lane notes).
+14 `todo!()`, all in `crates/transom/src/remote_desktop.rs` (P2-T3); `transom-core` has none. P2-T1
+and P2-T2 (with the chooser client) are filled.
 
 | File | Items | Lane | Proven by |
 | --- | --- | --- | --- |
-| `crates/transom/src/settings.rs` | `DesktopAppearance::current`, `SettingsService::read_all`, `read` (3) | P2-T1 | `tests/it/fill.rs::the_desktop_appearance_reads_without_error`, `dev/accept/settings.sh` |
-| `crates/transom/src/screenshot.rs` | `screenshot`, `pick_color` (2) | P2-T1 | `dev/accept/screenshot.sh` |
-| `crates/transom/src/inhibit.rs` | `inhibit`, `create_monitor`, `query_end_response` (3) | P2-T1 | `dev/accept/inhibit.sh` |
 | `crates/transom/src/remote_desktop.rs` | 14 interface methods | P2-T3 | `dev/accept/remote-desktop.sh` |
 
-Ignored tests: P2-T1 1 (`crates/transom/tests/it/fill.rs`).
+No ignored tests.
 
 ## Open items
 
@@ -22,19 +19,29 @@ Ignored tests: P2-T1 1 (`crates/transom/tests/it/fill.rs`).
    frozen here as the client (`chooser.rs`, the `Shell1` proxy): `(app_label: s, kinds: u,
    multiple: u, cursor_modes: au) -> (sources: a(ss), cursor: u)` on name `org.quire.Shell`, path
    `/org/quire/Shell1`. The shell serves it.
-2. **Settings source.** `DesktopAppearance` reads the desktop settings document. Reading it with
-   quire's `ds-settings` (v0.3.16, rev `b2dab9ce9b8cb2150b7050b4529d9479f659d3cf`) needs that
-   dependency in `crates/transom/Cargo.toml`; P2-T1 adds it there and nowhere else. `transom-core`
-   does not need it: the portal's contract is three keys.
+2. **Settings source.** `DesktopAppearance` reads `quire/appearance.toml` with a small parser of its
+   own (`settings::parse_appearance`: `theme` and `accent` in `[appearance]`; no contrast key exists
+   in the document yet). quire's `ds-settings` (v0.3.16) was not added: it pulls `ds-core`, `ds-style`
+   (with an image decoder), `chordkit`, `toml` and `notify`, a graph far heavier than three keys. The
+   eight accent colours are the macOS system values written into `settings.rs`; check them against
+   quire's token table. Changes are found by looking at the file every 2 seconds.
 3. **Restore data shape.** Checked against the installed interface XML (version 6): `restore_data`
    is `(suv)`. transom writes `("quire", 1, <token as a string variant>)`; `RestoreToken` is the token.
    Closed.
 4. **`UseIn=quire`** in `dist/quire.portal` matches `XDG_CURRENT_DESKTOP`; the session must set
    it to `quire`.
 5. **PipeWire needs its development files** to build the `pipewire` crate (libpipewire and clang).
-6. **Interface XML not re-read.** The method signatures of the five interfaces were written from
-   the portal documentation as remembered; the first fill lane diffs them against the installed
-   interface files and fixes any difference.
+6. **Interface XML re-read (P2-T1, portal 1.22).** Settings, Inhibit and the Screenshot methods match.
+   Differences found: Screenshot is version 3 and has an `AvailableTargets` property (now served,
+   value 1 = the whole screen; was version 2 without it); the Screenshot options `modal`,
+   `interactive`, `target` and `permission_store_checked` are read-only hints and are ignored.
+   `dist/` matches the installed `portals.conf(5)` and portal-file format. Still to re-read: ScreenCast
+   and RemoteDesktop (P2-T2, P2-T3).
+7. **Screenshot cannot list outputs.** `screenshot::OutputLayout` (which outputs exist, where) has only
+   `FixedLayout`; `main.rs` passes an empty one, so a screenshot is answered as failed until
+   `capture/` offers a listing (names and positions) for the real layout. The Inhibit effect talks to
+   the login manager on the system bus (`LogindInhibitor`); the compositor's idle-inhibit is not used.
+   `PickColor` answers as cancelled until the shell offers a picker.
 
 ## ScreenCast (P2-T2) facts and asks
 
