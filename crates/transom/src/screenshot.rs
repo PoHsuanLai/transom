@@ -290,8 +290,13 @@ fn paint(
         let source = &bytes[row * stride..row * stride + w * 4];
         let start = ((origin.1 + row) * canvas_width + origin.0) * 4;
         let target = &mut canvas[start..start + w * 4];
-        for (to, from) in target.chunks_exact_mut(4).zip(source.chunks_exact(4)) {
-            to.copy_from_slice(&[from[r], from[g], from[b], 255]);
+        for (to, from) in target
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(source.as_chunks::<4>().0)
+        {
+            *to = [from[r], from[g], from[b], 255];
         }
     }
     Ok(())
