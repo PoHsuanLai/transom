@@ -40,6 +40,8 @@ scripts/check-boundary.sh
 | `screencast::restore::RestoreStore` | `FileStore` | `MemoryStore` | P2-T2 |
 | `chooser::Chooser` | `ShellChooser` (calls the shell's picker) | `FakeChooser` | P2-T2 (chooser client) |
 | `settings::AppearanceSource` | `DesktopAppearance` | `FixedAppearance` | P2-T1 |
+| `remote_desktop::Consent` | `ShellConsent` (the chooser path) | `FakeConsent` | P2-T3 |
+| `remote_desktop::EisHandout` | `CasementEis` (`org.quire.Compositor1.ConnectEis`) | `FakeEis` | P2-T3 |
 
 `Pump` (`screencast/stream.rs`) is the loop body between a `CaptureSource` and a `FrameSink`, and
 is implemented and tested against the fakes.
@@ -55,6 +57,14 @@ is implemented and tested against the fakes.
    `NodeReady` returns the node and the reply carries it.
 6. A closed window or unplugged display ends the capture (`PumpOutcome::SourceEnded`,
    `CastIn::StreamEnded`).
+
+## 4b. Flow of remote control
+
+`CreateSession` opens a session (and serves the session object at its handle); `SelectDevices`
+records `types`; `Start` asks the person through `Consent` and answers with the devices granted;
+`ConnectToEIS` (only after a yes) asks the compositor for a socket with `EisHandout`, which
+tags everything the app sends as remote input of this session. The `Notify*` methods are
+accepted and dropped: input comes only over the socket.
 
 ## 5. Window capture
 

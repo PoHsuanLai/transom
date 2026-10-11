@@ -4,5 +4,6 @@
 mod capture;
 mod chooser;
 mod fill;
+mod remote_desktop;
 mod session;
 mod stream;

@@ -7,6 +7,8 @@
 //! - [`screencast::stream`]: where pixels go ([`screencast::stream::FrameSink`]).
 //! - [`screencast::restore`]: where restore tokens are kept ([`screencast::restore::RestoreStore`]).
 //! - [`chooser`]: how the person is asked what to share ([`chooser::Chooser`]).
+//! - [`remote_desktop`]: how the person is asked to allow remote control ([`remote_desktop::Consent`])
+//!   and where an input socket comes from ([`remote_desktop::EisHandout`]).
 //! - [`settings::AppearanceSource`]: where the appearance comes from.
 //!
 //! [`serve`] puts the five interfaces on the session bus.
@@ -44,6 +46,10 @@ pub struct Parts {
     pub restore: Box<dyn screencast::restore::RestoreStore>,
     /// Reads the appearance.
     pub appearance: Box<dyn settings::AppearanceSource>,
+    /// Asks the person whether an app may control the computer.
+    pub consent: Box<dyn remote_desktop::Consent>,
+    /// Gets an input socket from the compositor for a remote-desktop session.
+    pub eis: Box<dyn remote_desktop::EisHandout>,
 }
 
 impl Parts {
@@ -57,6 +63,10 @@ impl Parts {
             chooser: Box::new(chooser),
             restore: Box::new(restore),
             appearance: Box::new(appearance),
+            consent: Box::new(remote_desktop::ShellConsent::new(Box::new(
+                chooser::ShellChooser::new(),
+            ))),
+            eis: Box::new(remote_desktop::CasementEis::new()),
         }
     }
 }
@@ -69,6 +79,8 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         chooser,
         restore,
         appearance,
+        consent,
+        eis,
     } = parts;
     let connection = zbus::connection::Builder::session()?
         .name(BUS_NAME)?
@@ -77,7 +89,10 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
             PORTAL_PATH,
             screencast::ScreenCastService::new(chooser, restore),
         )?
-        .serve_at(PORTAL_PATH, remote_desktop::RemoteDesktopService::new())?
+        .serve_at(
+            PORTAL_PATH,
+            remote_desktop::RemoteDesktopService::new(consent, eis),
+        )?
         .serve_at(PORTAL_PATH, settings::SettingsService::new(appearance))?
         .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
         .build()
