@@ -5,6 +5,7 @@
 //! this interface moves the wire values in and out and drives the seams.
 
 pub mod pipewire;
+pub use self::pipewire::PipewireSink;
 pub mod restore;
 pub mod session;
 pub mod stream;

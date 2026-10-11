@@ -1,7 +1,7 @@
 //! The tests the fill lanes un-ignore. Each is written now; the `#[ignore]` names its lane.
 
 use transom::capture::{CaptureSource, FakeCapture, PhysicalSizeWire};
-use transom::screencast::pipewire::PipewireSink;
+use transom::screencast::PipewireSink;
 use transom::screencast::restore::{FileStore, RestoreStore};
 use transom::screencast::stream::FrameSink;
 use transom::settings::{AppearanceSource, DesktopAppearance};

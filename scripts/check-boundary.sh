@@ -3,7 +3,7 @@
 # mechanical form. Rows:
 #   T1 transom-core reaches no zbus, tokio, pipewire, wayland, image or tracing
 #   T2 only crates/transom/src/capture/ names the wayland crates
-#   T3 only crates/transom/src/screencast/pipewire.rs names the pipewire crate
+#   T3 only crates/transom/src/screencast/pipewire.rs names the pipewire crate (a path through transom's own `pipewire` module, `self::pipewire::` or `screencast::pipewire::`, is not the crate)
 #   T4 only crates/transom/src/screenshot.rs (P2-T1) names the image crate
 #   T5 no clock, no environment read and no file I/O in transom-core
 #   T6 the environment is read only in crates/transom/src/main.rs
@@ -41,7 +41,7 @@ names_only() {
 }
 
 names_only "T2 only capture/ names the wayland crates" '\bwayland_(client|protocols|backend)\b' 'crates/transom/src/capture/'
-names_only "T3 only screencast/pipewire.rs names pipewire" '\b(pipewire|libspa)::' 'crates/transom/src/screencast/pipewire\.rs'
+names_only "T3 only screencast/pipewire.rs names pipewire" '(^|[^:[:alnum:]_])(pipewire|libspa)::' 'crates/transom/src/screencast/pipewire\.rs'
 names_only "T4 only screenshot.rs names image" '\bimage::' 'crates/transom/src/screenshot\.rs'
 names_only "T5 transom-core reads no clock, environment or file" \
   '\b(Instant::now|SystemTime::now|std::env::|env::var|std::fs::|File::open|File::create)\b' '$^' crates/transom-core
