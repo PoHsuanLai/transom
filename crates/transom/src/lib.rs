@@ -44,6 +44,8 @@ pub struct Parts {
     pub restore: Box<dyn screencast::restore::RestoreStore>,
     /// Reads the appearance.
     pub appearance: Box<dyn settings::AppearanceSource>,
+    /// Takes screenshots; without a setup every screenshot is answered as failed.
+    pub screenshots: screenshot::ScreenshotSetup,
 }
 
 impl Parts {
@@ -57,7 +59,14 @@ impl Parts {
             chooser: Box::new(chooser),
             restore: Box::new(restore),
             appearance: Box::new(appearance),
+            screenshots: screenshot::ScreenshotSetup::unconfigured(),
         }
+    }
+
+    /// These parts with screenshots set up as `screenshots` says.
+    pub fn with_screenshots(mut self, screenshots: screenshot::ScreenshotSetup) -> Self {
+        self.screenshots = screenshots;
+        self
     }
 }
 
@@ -69,10 +78,14 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         chooser,
         restore,
         appearance,
+        screenshots,
     } = parts;
     let connection = zbus::connection::Builder::session()?
         .name(BUS_NAME)?
-        .serve_at(PORTAL_PATH, screenshot::ScreenshotService::new())?
+        .serve_at(
+            PORTAL_PATH,
+            screenshot::ScreenshotService::with_setup(screenshots),
+        )?
         .serve_at(
             PORTAL_PATH,
             screencast::ScreenCastService::new(chooser, restore),
@@ -82,5 +95,6 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
         .build()
         .await?;
+    settings::spawn_watch(connection.clone());
     Ok(connection)
 }

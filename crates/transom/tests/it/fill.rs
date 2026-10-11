@@ -9,7 +9,6 @@ use transom_core::restore::Grant;
 use transom_core::{CastSource, CursorMode, RestoreBook, RestoreToken};
 
 #[test]
-#[ignore = "P2-T1"]
 fn the_desktop_appearance_reads_without_error() {
     let mut source = DesktopAppearance::new();
     assert!(source.current().is_ok());

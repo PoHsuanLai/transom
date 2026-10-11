@@ -4,5 +4,8 @@
 mod capture;
 mod chooser;
 mod fill;
+mod inhibit;
+mod screenshot;
 mod session;
+mod settings;
 mod stream;
