@@ -82,7 +82,12 @@ pub fn convert(
         if same {
             d_row.copy_from_slice(s_row);
         } else {
-            for (s_px, d_px) in s_row.chunks_exact(4).zip(d_row.chunks_exact_mut(4)) {
+            for (s_px, d_px) in s_row
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(d_row.as_chunks_mut::<4>().0)
+            {
                 d_px[b.red] = s_px[a.red];
                 d_px[b.green] = s_px[a.green];
                 d_px[b.blue] = s_px[a.blue];

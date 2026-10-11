@@ -32,7 +32,9 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
 };
 
-use super::{CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat};
+use super::{
+    Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat,
+};
 
 /// How many times a frame that fails for a reason that may pass is asked for again.
 const FRAME_ATTEMPTS: u32 = 3;
@@ -292,7 +294,7 @@ pub(super) struct Copier {
 impl Copier {
     /// Start copying `source` (consumed) and wait for the compositor's buffer constraints.
     pub fn start(
-        mut link: Link,
+        link: Link,
         source: ExtImageCaptureSourceV1,
         cursor: CursorMode,
     ) -> Result<Self, CaptureError> {

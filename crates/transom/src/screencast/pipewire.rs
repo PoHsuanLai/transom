@@ -242,7 +242,7 @@ fn serve(
                 let _ = stream.update_params(&mut [pod]);
             }
         })
-        .process(|stream, state| fill_next_buffer(stream, state))
+        .process(fill_next_buffer)
         .register()
         .map_err(failed)?;
 
@@ -252,10 +252,10 @@ fn serve(
         move |command| match command {
             Command::Quit => mainloop.quit(),
             Command::Resize(size) => {
-                if let Ok(bytes) = format_pod(size) {
-                    if let Some(pod) = Pod::from_bytes(&bytes) {
-                        let _ = stream.update_params(&mut [pod]);
-                    }
+                if let Ok(bytes) = format_pod(size)
+                    && let Some(pod) = Pod::from_bytes(&bytes)
+                {
+                    let _ = stream.update_params(&mut [pod]);
                 }
             }
         }
