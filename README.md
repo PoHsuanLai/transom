@@ -10,3 +10,11 @@ with `xdg-desktop-portal-gtk`.
 
 Status: being built (phase P2 of casement). Licensed under either of MIT or Apache-2.0, at your
 option.
+
+## Installing
+
+`scripts/install.sh [--prefix DIR] [--destdir DIR] [--bin-dir DIR] [--no-build]` builds transom and installs the
+binary (`libexec/transom`), `transom.service`, the D-Bus activation file and `quire.portal`. The portal choice
+(`dist/quire-portals.conf`) is an example; the desktop ships the one it uses. The session must set
+`XDG_CURRENT_DESKTOP=quire` so the portal file's `UseIn=quire` matches. The first portal call starts transom by
+D-Bus activation; nothing is enabled under the home directory.

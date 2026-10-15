@@ -97,3 +97,13 @@ Not compiled; the orchestrator gates. `remote_desktop.rs` has no `todo!()`.
   parameter next to `ObjectPath` arguments; `server.at(session_handle, object)` and `server.remove::<SessionObject, _>(&str)`;
   the `From<zbus::zvariant::OwnedFd> for std::os::fd::OwnedFd` conversion; `name.as_str()` on the `MethodError` name;
   `OwnedValue::try_from(Value::from(u32))`.
+
+## Install (desktop-transom lane, 2026-10-15)
+
+- `scripts/install.sh` added (binary, unit, D-Bus file, portal file; prefix and destdir aware, no home writes).
+  The desktop installs transom through it and ships its own `quire-portals.conf` (same choices as `dist/`).
+- **Asks before the desktop can drop xdg-desktop-portal-wlr in earnest.** (a) Screenshot is answered as failed
+  while `main.rs` passes an empty `FixedLayout` (open item 7): it needs an `OutputLayout` from the capture
+  side. (b) ScreenCast Start needs `org.quire.Shell1.PickCaptureSource` served by sill (open item 1);
+  without it a browser's share dialog never gets a source. (c) `PickColor` is cancelled until the shell offers
+  a picker.

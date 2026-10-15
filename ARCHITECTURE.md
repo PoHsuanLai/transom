@@ -27,6 +27,7 @@ crates/transom/src/{lib, main, error, chooser, screenshot, remote_desktop, setti
                    screencast/{mod, session, stream, pipewire, restore}.rs
                    capture/{mod, fake, output, toplevel}.rs
 dist/   quire.portal  quire-portals.conf  org.freedesktop.impl.portal.desktop.quire.service  transom.service
+scripts/install.sh   installs the binary, the unit, the D-Bus file and the portal file (standalone; --prefix, --destdir, --bin-dir)
 dev/    up.sh down.sh lib/{jail,chain}.sh accept/*.sh        (the jailed portal chain)
 scripts/check-boundary.sh
 ```
