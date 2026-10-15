@@ -23,7 +23,7 @@ output=${TRANSOM_OUTPUT:-HEADLESS-1}
 env_file=$("$root/dev/up.sh" --env "$TRANSOM_COMPOSITOR_ENV")
 # shellcheck source=/dev/null
 source "$env_file"
-trap 'stop_cast; kill "${SHELL_PID:-0}" 2>/dev/null || true; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
+trap 'stop_cast; stop_fake_shell; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
 status=0
 
 # No shell on the bus: sharing is refused, never granted without asking.
@@ -37,7 +37,7 @@ run_cast 1 0
 if [ "$(cast_field response)" = 1 ]; then step PASS "2 an empty answer ends the session as cancelled"; else step FAIL "2 response was $(cast_field response)"; status=1; fi
 if grep -q "label='" "$SHELL_LOG" && grep -q "kinds=1 " "$SHELL_LOG"; then step PASS "3 the shell got the app label and the kinds"; else step FAIL "3 the call was not as expected: $(cat "$SHELL_LOG")"; status=1; fi
 stop_cast
-kill "$SHELL_PID" 2>/dev/null || true; wait "$SHELL_PID" 2>/dev/null || true
+stop_fake_shell
 
 # An output answer opens the stream.
 start_fake_shell "output:$output"

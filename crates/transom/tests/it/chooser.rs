@@ -1,8 +1,11 @@
+use transom::access::{AccessService, Answer, FakeAsker, Question, response_of};
 use transom::chooser::{
     Chooser, ChooserError, FakeChooser, answer_from_wire, nobody_answers, source_from_wire,
     source_to_wire, unavailable_is_cancel,
 };
+use transom::screencast::Dict;
 use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, SourceKinds};
+use zbus::zvariant::{OwnedValue, Value};
 
 fn request() -> ChoiceRequest {
     ChoiceRequest {
@@ -97,4 +100,68 @@ fn a_shell_that_cannot_answer_is_a_cancel_and_other_failures_stay_failures() {
         assert!(unavailable_is_cancel(Err(failure)).is_err());
     }
     assert!(matches!(unavailable_is_cancel(Ok(None)), Ok(None)));
+}
+
+#[test]
+fn what_asking_came_to_is_the_portals_response_code() {
+    let cases: [(&str, Result<Answer, ChooserError>, u32); 6] = [
+        ("granted", Ok(Answer::Granted), 0),
+        ("denied", Ok(Answer::Denied), 1),
+        ("dismissed", Ok(Answer::Dismissed), 2),
+        ("no shell is a no", Err(ChooserError::Unavailable), 1),
+        ("a bad answer ends it", Err(ChooserError::BadAnswer), 2),
+        (
+            "a failed call ends it",
+            Err(ChooserError::Call("x".into())),
+            2,
+        ),
+    ];
+    for (name, asked, want) in cases {
+        assert_eq!(response_of(&asked), want, "{name}");
+    }
+    for (wire, want) in [
+        (0, Some(Answer::Granted)),
+        (1, Some(Answer::Denied)),
+        (2, Some(Answer::Dismissed)),
+        (3, None),
+    ] {
+        assert_eq!(Answer::from_wire(wire), want, "shell answer {wire}");
+    }
+}
+
+fn text(value: &str) -> OwnedValue {
+    OwnedValue::try_from(Value::new(value)).expect("a string variant")
+}
+
+#[tokio::test]
+async fn the_access_dialog_asks_the_shell_in_the_apps_words_and_replies_with_its_answer() {
+    let asker = std::sync::Arc::new(FakeAsker::new(vec![
+        Answer::Granted,
+        Answer::Denied,
+        Answer::Dismissed,
+    ]));
+    let service = AccessService::new(Box::new(asker.clone()));
+    let mut options = Dict::new();
+    options.insert("grant_label".to_owned(), text("Share"));
+    options.insert("deny_label".to_owned(), text(" "));
+    let question = Question::from_call(
+        "org.example.screen-grab.desktop",
+        "Take a screenshot?",
+        "",
+        "It can see everything.",
+        &options,
+    );
+    assert_eq!(question.app_label, "Screen grab");
+    assert_eq!(question.grant_label, "Share");
+    assert_eq!(
+        question.deny_label, "Don\u{2019}t Allow",
+        "a blank label falls back"
+    );
+    for want in [0, 1, 2, 1] {
+        let (code, results) = service.decide(&question).await;
+        assert_eq!(code, want);
+        assert!(results.is_empty());
+    }
+    assert_eq!(asker.asked().len(), 4);
+    assert_eq!(asker.asked()[0], question);
 }

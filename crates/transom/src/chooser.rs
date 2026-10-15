@@ -43,6 +43,13 @@ pub trait Chooser: Send + Sync + std::fmt::Debug {
 /// candidates.
 ///
 /// `PickColor(app_label: s) -> (color: a(ddd))` serves the Screenshot portal's colour picker.
+///
+/// `AskPermission(app_label: s, title: s, subtitle: s, body: s, grant_label: s, deny_label: s)
+/// -> (answer: u)` serves the Access portal's yes-or-no question: the shell shows a sheet with
+/// the app's icon and name, the three texts, and two buttons labelled as given (the grant button
+/// is the default). `answer` is 0 when the person pressed the grant button, 1 when they pressed
+/// the deny button, 2 when they closed the sheet (Escape, or the sheet was replaced) without
+/// answering. Only the portal backend's name may ask.
 #[zbus::proxy(
     interface = "org.quire.Shell1",
     default_service = "org.quire.Shell",
@@ -62,6 +69,17 @@ pub trait Shell1 {
     /// Show the colour picker and wait for the answer: no tuple is a cancel, one tuple is the
     /// picked colour as red, green and blue, each 0 to 1.
     fn pick_color(&self, app_label: &str) -> zbus::Result<Vec<(f64, f64, f64)>>;
+
+    /// Show a yes-or-no sheet and wait for the answer: 0 granted, 1 denied, 2 dismissed.
+    fn ask_permission(
+        &self,
+        app_label: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        grant_label: &str,
+        deny_label: &str,
+    ) -> zbus::Result<u32>;
 }
 
 /// The real chooser: the desktop shell's picker over the session bus.

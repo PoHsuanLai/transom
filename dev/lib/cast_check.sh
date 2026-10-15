@@ -45,7 +45,28 @@ run_cast() {
   done
 }
 
-stop_cast() { exec {CAST_FD}>&- 2>/dev/null || true; wait "$CAST_PID" 2>/dev/null || true; }
+# stop_cast: end the cast run_cast started. Safe to call when none was started (an EXIT trap runs
+# it even when the script stopped before its first cast, with CAST_FD and CAST_PID unset).
+stop_cast() {
+  if [ -n "${CAST_FD:-}" ]; then
+    exec {CAST_FD}>&-
+    CAST_FD=""
+  fi
+  if [ -n "${CAST_PID:-}" ]; then
+    wait "$CAST_PID" 2>/dev/null || true
+    CAST_PID=""
+  fi
+}
+
+# stop_fake_shell: stop the shell start_fake_shell started, if any. Never signals pid 0, which
+# would be this script's own process group.
+stop_fake_shell() {
+  if [ -n "${SHELL_PID:-}" ]; then
+    kill "$SHELL_PID" 2>/dev/null || true
+    wait "$SHELL_PID" 2>/dev/null || true
+    SHELL_PID=""
+  fi
+}
 
 cast_field() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" "$CAST_OUT" | head -n 1; }
 

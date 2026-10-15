@@ -31,7 +31,7 @@ want_h=$(awk -v n="$lh" -v s="$scale" 'BEGIN { printf "%d", n * s + 0.5 }')
 env_file=$("$root/dev/up.sh" --env "$TRANSOM_COMPOSITOR_ENV")
 # shellcheck source=/dev/null
 source "$env_file"
-trap 'stop_cast; kill "${SHELL_PID:-0}" 2>/dev/null || true; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
+trap 'stop_cast; stop_fake_shell; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
 status=0
 
 start_fake_shell "window:$TRANSOM_TEST_WINDOW"

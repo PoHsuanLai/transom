@@ -11,6 +11,8 @@ source "$root/dev/lib/jail.sh"
 require_jail
 # shellcheck source=dev/lib/chain.sh
 source "$root/dev/lib/chain.sh"
+# shellcheck source=dev/lib/cast_check.sh
+source "$root/dev/lib/cast_check.sh"
 command -v gdbus >/dev/null || { echo "gdbus is not installed" >&2; exit 3; }
 failed=0
 pass() { echo "PASS $1: $2"; }
@@ -18,12 +20,15 @@ fail() { echo "FAIL $1: $2"; failed=1; }
 PORTAL=(gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop)
 : "${TRANSOM_COMPOSITOR_ENV:?set TRANSOM_COMPOSITOR_ENV to the env file of the compositor session}"
 start_chain --env "$TRANSOM_COMPOSITOR_ENV"
-trap stop_chain EXIT
+trap 'stop_fake_shell; stop_chain' EXIT
+# The portal frontend asks the Access portal before it takes a screenshot; the fake shell says yes
+# (TRANSOM_FAKE_ACCESS, default 0) and the call is logged in $SHELL_LOG.
+start_fake_shell none
 dir=$(mktemp -d)
 mon="$dir/monitor"
 gdbus monitor --session --dest org.freedesktop.portal.Desktop >"$mon" 2>&1 &
 mpid=$!
-trap 'kill "$mpid" 2>/dev/null || true; stop_chain' EXIT
+trap 'kill "$mpid" 2>/dev/null || true; stop_fake_shell; stop_chain' EXIT
 sleep 0.5
 "${PORTAL[@]}" --method org.freedesktop.portal.Screenshot.Screenshot "" "{'handle_token': <'accept'>}" >/dev/null
 uri=""
@@ -33,6 +38,7 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 if [ -z "$uri" ]; then fail response "no uri arrived"; else pass response "a uri arrived"; fi
+if grep -q "^ask " "$SHELL_LOG"; then pass access "the person was asked through the shell"; else echo "NOTE access: the frontend did not ask (an app it already trusts is not asked)"; fi
 file=$(printf '%b' "$(printf '%s' "$uri" | sed 's/%\(..\)/\\x\1/g')")
 if [ -f "$file" ] && [ "$(head -c 8 "$file" | od -An -tx1 | tr -d ' \n')" = "89504e470d0a1a0a" ]; then
   pass png "$(basename "$file") is a PNG"

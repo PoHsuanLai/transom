@@ -9,10 +9,12 @@
 //! - [`chooser`]: how the person is asked what to share ([`chooser::Chooser`]).
 //! - [`remote_desktop`]: how the person is asked to allow remote control ([`remote_desktop::Consent`])
 //!   and where an input socket comes from ([`remote_desktop::EisHandout`]).
+//! - [`access`]: how the person is asked a yes-or-no question about an app ([`access::Asker`]).
 //! - [`settings::AppearanceSource`]: where the appearance comes from.
 //!
-//! [`serve`] puts the five interfaces on the session bus.
+//! [`serve`] puts the six interfaces on the session bus.
 
+pub mod access;
 pub mod capture;
 pub mod chooser;
 pub mod error;
@@ -50,6 +52,8 @@ pub struct Parts {
     pub consent: Box<dyn remote_desktop::Consent>,
     /// Gets an input socket from the compositor for a remote-desktop session.
     pub eis: Box<dyn remote_desktop::EisHandout>,
+    /// Asks the person yes-or-no questions about an app.
+    pub access: Box<dyn access::Asker>,
     /// Takes screenshots; without a setup every screenshot is answered as failed.
     pub screenshots: screenshot::ScreenshotSetup,
 }
@@ -69,6 +73,7 @@ impl Parts {
                 chooser::ShellChooser::new(),
             ))),
             eis: Box::new(remote_desktop::CasementEis::new()),
+            access: Box::new(access::ShellAsker::new()),
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
         }
     }
@@ -80,7 +85,7 @@ impl Parts {
     }
 }
 
-/// Claim [`BUS_NAME`] on the session bus and serve the five interfaces.
+/// Claim [`BUS_NAME`] on the session bus and serve the six interfaces.
 ///
 /// The returned connection keeps the service alive; drop it to stop.
 pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
@@ -90,6 +95,7 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         appearance,
         consent,
         eis,
+        access,
         screenshots,
     } = parts;
     let connection = zbus::connection::Builder::session()?
@@ -108,6 +114,7 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         )?
         .serve_at(PORTAL_PATH, settings::SettingsService::new(appearance))?
         .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
+        .serve_at(PORTAL_PATH, access::AccessService::new(access))?
         .build()
         .await?;
     settings::spawn_watch(connection.clone());

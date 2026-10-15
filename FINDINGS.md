@@ -173,3 +173,24 @@ Not compiled; the orchestrator gates.
      (`UnknownObject`/`UnknownMethod`), so no app breaks.
 3. **Remote control consent (from p2-t3, still open).** `AskRemoteControl(app_label: s, devices: u) -> (allowed: u)`
    (1 yes, 0 no), same object and caller check; today transom asks `PickCaptureSource` and reads any pick as yes.
+4. **Yes-or-no question (transom-access).** The Access portal needs the person to answer through the shell. The shell
+   must serve, on the same object (`/org/quire/Shell1`, interface `org.quire.Shell1`, name `org.quire.Shell`):
+
+   ```
+   AskPermission(app_label: s, title: s, subtitle: s, body: s, grant_label: s, deny_label: s) -> (answer: u)
+   ```
+   - `app_label`: the app's name as the person knows it, as for `PickCaptureSource`. The three texts come from the
+     app's request through the portal frontend and are shown as given; any of them may be empty.
+   - Behaviour: a sheet (the confirm/consent sheet's look) with the app's icon and name, `title` as the headline,
+     `subtitle` under it, `body` as the explanation, and two buttons: `grant_label` (default, Return) and
+     `deny_label`. Block until answered; no timeout. One question at a time: a second call while one is open gets
+     `org.freedesktop.DBus.Error.LimitsExceeded`. Buttons are disarmed briefly after the sheet appears, as the confirm
+     sheet does, so a key typed for something else cannot answer it.
+   - `answer`: 0 when the person pressed `grant_label`, 1 when they pressed `deny_label`, 2 when they dismissed the
+     sheet (Escape, or it was replaced) without answering. Anything else is a bad answer and the portal call fails.
+   - Caller check, as for `PickCaptureSource`: only the owner of `org.freedesktop.impl.portal.desktop.quire`.
+   - Until sill serves it, transom answers every question as denied (response 1) when the object is absent, so a
+     screenshot is refused rather than taken unasked.
+   - The Access portal's `icon` and `choices` options are not forwarded or answered; the reply carries no results.
+   - The desktop's own `quire-portals.conf` (desktop/session) must also route
+     `org.freedesktop.impl.portal.Access=quire`.

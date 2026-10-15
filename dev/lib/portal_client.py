@@ -2,8 +2,9 @@
 """A small client for the jailed chain's acceptance checks (stdlib plus PyGObject's Gio).
 
   portal_client.py fake-shell LOG ANSWER [ANSWER...]
-      Own org.quire.Shell and serve Shell1.PickCaptureSource and Shell1.PickColor (a fixed colour,
-      or a cancel for `none`). Every call is appended to LOG as
+      Own org.quire.Shell and serve Shell1.PickCaptureSource, Shell1.PickColor (a fixed colour,
+      or a cancel for `none`) and Shell1.AskPermission (the answer in TRANSOM_FAKE_ACCESS: 0
+      granted, the default; 1 denied; 2 dismissed). Every call is appended to LOG as
       one line; the answer is the sources given, each `output:NAME` or `window:IDENTIFIER`, with
       the pointer mode from TRANSOM_FAKE_CURSOR (default 1). `none` answers with a cancel.
       Runs until killed.
@@ -35,6 +36,12 @@ SHELL_XML = """<node><interface name="org.quire.Shell1">
   <method name="PickColor">
     <arg type="s" name="app_label" direction="in"/>
     <arg type="a(ddd)" name="color" direction="out"/>
+  </method>
+  <method name="AskPermission">
+    <arg type="s" name="app_label" direction="in"/><arg type="s" name="title" direction="in"/>
+    <arg type="s" name="subtitle" direction="in"/><arg type="s" name="body" direction="in"/>
+    <arg type="s" name="grant_label" direction="in"/><arg type="s" name="deny_label" direction="in"/>
+    <arg type="u" name="answer" direction="out"/>
   </method></interface></node>"""
 
 PORTAL = "org.freedesktop.portal.Desktop"
@@ -45,6 +52,7 @@ def fake_shell(log_path, answers):
     import os
     sources = [] if answers == ["none"] else [tuple(a.split(":", 1)) for a in answers]
     cursor = int(os.environ.get("TRANSOM_FAKE_CURSOR", "1"))
+    access = int(os.environ.get("TRANSOM_FAKE_ACCESS", "0"))
 
     def on_call(conn, sender, path, iface, method, params, invocation):
         if method == "PickColor":
@@ -53,6 +61,12 @@ def fake_shell(log_path, answers):
                 log.write(f"color label={label!r}\n")
             colour = [] if answers == ["none"] else [(0.25, 0.5, 0.75)]
             invocation.return_value(GLib.Variant("(a(ddd))", (colour,)))
+            return
+        if method == "AskPermission":
+            label, title, subtitle, body, grant, deny = params.unpack()
+            with open(log_path, "a") as log:
+                log.write(f"ask label={label!r} title={title!r} grant={grant!r} deny={deny!r}\n")
+            invocation.return_value(GLib.Variant("(u)", (access,)))
             return
         label, kinds, multiple, modes = params.unpack()
         with open(log_path, "a") as log:

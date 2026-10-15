@@ -55,8 +55,12 @@ start_chain() {
   xdp=$(transom_tool xdg-desktop-portal) || return 3
 
   if [ -n "$envfile" ]; then
+    # The env file holds plain assignments (the bus address, the compositor's display); `set -a`
+    # exports them, or the children started below would not see the session they join.
+    set -a
     # shellcheck source=/dev/null
     source "$envfile"
+    set +a
   else
     private_bus_start || return 1
     echo "TRANSOM_BUS_PID=$PRIVATE_BUS_PID" >> "$state/env"
@@ -70,11 +74,13 @@ start_chain() {
   "$wp" >"$state/wireplumber.log" 2>&1 & echo "TRANSOM_WIREPLUMBER_PID=$!" >> "$state/env"
   "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
   "$xdp" >"$state/portal.log" 2>&1 & echo "TRANSOM_PORTAL_PID=$!" >> "$state/env"
+  # `export` on each line: callers source this file in their own shell and start more clients
+  # (a fake shell, a cast) that must find the same bus.
   {
-    echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
-    echo "XDG_CURRENT_DESKTOP=quire"
-    echo "XDG_DESKTOP_PORTAL_DIR=$state/portals"
-    echo "TRANSOM_STATE=$state"
+    printf 'export DBUS_SESSION_BUS_ADDRESS=%q\n' "$DBUS_SESSION_BUS_ADDRESS"
+    echo "export XDG_CURRENT_DESKTOP=quire"
+    printf 'export XDG_DESKTOP_PORTAL_DIR=%q\n' "$state/portals"
+    printf 'export TRANSOM_STATE=%q\n' "$state"
   } >> "$state/env"
 
   # Wait (up to 10 s) for the portal frontend to own its name.

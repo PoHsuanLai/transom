@@ -2,7 +2,7 @@
 
 transom is the quire desktop's portal backend. `xdg-desktop-portal` (a separate process) asks it
 over the session bus; it answers with the `org.freedesktop.impl.portal.*` interfaces. It serves
-Screenshot, ScreenCast, RemoteDesktop, Settings and Inhibit. The file chooser stays with the GTK
+Screenshot, ScreenCast, RemoteDesktop, Settings, Inhibit and Access. The file chooser stays with the GTK
 backend (see `dist/quire-portals.conf`).
 
 ## 1. Crates and allowed edges
@@ -10,7 +10,7 @@ backend (see `dist/quire-portals.conf`).
 | Crate | Purpose | I/O |
 | --- | --- | --- |
 | `transom-core` | the screen-cast session machine (`step`), restore tokens and book, the source choice, the inhibit book, the layout of a picture of all outputs, the settings values and their wire numbers | none |
-| `transom` | the five D-Bus interfaces (zbus), the seams and their real and fake implementations, `serve`, the binary | D-Bus, Wayland, PipeWire, files |
+| `transom` | the six D-Bus interfaces (zbus), the seams and their real and fake implementations, `serve`, the binary | D-Bus, Wayland, PipeWire, files |
 
 `transom-core` depends on `thiserror` only. It reaches no zbus, tokio, pipewire, wayland, image
 or tracing (row T1 of `scripts/check-boundary.sh`) and reads no clock, environment or file (T5).
@@ -23,7 +23,7 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 
 ```
 crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, settings_values}.rs
-crates/transom/src/{lib, main, error, chooser, screenshot, remote_desktop, settings, inhibit}.rs
+crates/transom/src/{lib, main, error, chooser, screenshot, remote_desktop, settings, inhibit, access}.rs
                    screenshot/{layout, color}.rs
                    screencast/{mod, session, stream, pipewire, restore}.rs
                    capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/outputs.rs
@@ -44,6 +44,7 @@ scripts/check-boundary.sh
 | `screenshot::ColorPicker` | `ShellColorPicker` (`org.quire.Shell1.PickColor`) | `FakeColorPicker` | transom-shot |
 | `chooser::Chooser` | `ShellChooser` (calls the shell's picker) | `FakeChooser` | P2-T2 (chooser client) |
 | `settings::AppearanceSource` | `DesktopAppearance` | `FixedAppearance` | P2-T1 |
+| `access::Asker` | `ShellAsker` (`org.quire.Shell1.AskPermission`) | `FakeAsker` | transom-access |
 | `remote_desktop::Consent` | `ShellConsent` (the chooser path) | `FakeConsent` | P2-T3 |
 | `remote_desktop::EisHandout` | `CasementEis` (`org.quire.Compositor1.ConnectEis`) | `FakeEis` | P2-T3 |
 

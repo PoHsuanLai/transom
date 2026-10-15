@@ -23,7 +23,7 @@ output=${TRANSOM_OUTPUT:-HEADLESS-1}
 env_file=$("$root/dev/up.sh" --env "$TRANSOM_COMPOSITOR_ENV")
 # shellcheck source=/dev/null
 source "$env_file"
-trap 'stop_cast; kill "${SHELL_PID:-0}" 2>/dev/null || true; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
+trap 'stop_cast; stop_fake_shell; "$root/dev/down.sh" "$env_file" >/dev/null' EXIT
 status=0
 
 start_fake_shell "output:$output"
