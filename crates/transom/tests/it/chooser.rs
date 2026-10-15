@@ -107,7 +107,7 @@ fn what_asking_came_to_is_the_portals_response_code() {
     let cases: [(&str, Result<Answer, ChooserError>, u32); 6] = [
         ("granted", Ok(Answer::Granted), 0),
         ("denied", Ok(Answer::Denied), 1),
-        ("dismissed", Ok(Answer::Dismissed), 2),
+        ("dismissed is cancelled", Ok(Answer::Dismissed), 1),
         ("no shell is a no", Err(ChooserError::Unavailable), 1),
         ("a bad answer ends it", Err(ChooserError::BadAnswer), 2),
         (
@@ -157,7 +157,7 @@ async fn the_access_dialog_asks_the_shell_in_the_apps_words_and_replies_with_its
         question.deny_label, "Don\u{2019}t Allow",
         "a blank label falls back"
     );
-    for want in [0, 1, 2, 1] {
+    for want in [0, 1, 1, 1] {
         let (code, results) = service.decide(&question).await;
         assert_eq!(code, want);
         assert!(results.is_empty());

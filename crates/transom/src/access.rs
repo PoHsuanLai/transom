@@ -22,7 +22,8 @@ const DENY_LABEL: &str = "Don\u{2019}t Allow";
 /// The portal's response codes.
 const RESPONSE_GRANTED: u32 = 0;
 const RESPONSE_DENIED: u32 = 1;
-const RESPONSE_DISMISSED: u32 = 2;
+const RESPONSE_DISMISSED: u32 = 1;
+const RESPONSE_ENDED: u32 = 2;
 
 /// What the person did with the question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,7 +49,8 @@ impl Answer {
         }
     }
 
-    /// The portal's response code: 0 for a yes, 1 for a no, 2 for a question closed unanswered.
+    /// The portal's response code: 0 for a yes, 1 for a no or a question the person closed
+    /// (xdg-desktop-portal reads 1 as cancelled by the user; 2 is any other end).
     pub fn response(self) -> u32 {
         match self {
             Self::Granted => RESPONSE_GRANTED,
@@ -70,7 +72,7 @@ pub fn response_of(asked: &Result<Answer, ChooserError>) -> u32 {
         }
         Err(error) => {
             tracing::warn!(%error, "the question could not be asked");
-            RESPONSE_DISMISSED
+            RESPONSE_ENDED
         }
     }
 }
