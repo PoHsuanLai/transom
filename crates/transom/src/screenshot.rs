@@ -304,7 +304,7 @@ fn paint(
         let source = &bytes[from_row * stride..from_row * stride + w * 4];
         let start = ((origin.1 + row) * canvas_width + origin.0) * 4;
         let target = &mut canvas[start..start + cover_w * 4];
-        for (to, &column) in target.chunks_exact_mut(4).zip(&columns) {
+        for (to, &column) in target.as_chunks_mut::<4>().0.iter_mut().zip(&columns) {
             let from = &source[column * 4..column * 4 + 4];
             to.copy_from_slice(&[from[r], from[g], from[b], 255]);
         }
