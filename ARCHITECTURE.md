@@ -9,7 +9,7 @@ backend (see `dist/quire-portals.conf`).
 
 | Crate | Purpose | I/O |
 | --- | --- | --- |
-| `transom-core` | the screen-cast session machine (`step`), restore tokens and book, the source choice, the inhibit book, the settings values and their wire numbers | none |
+| `transom-core` | the screen-cast session machine (`step`), restore tokens and book, the source choice, the inhibit book, the layout of a picture of all outputs, the settings values and their wire numbers | none |
 | `transom` | the five D-Bus interfaces (zbus), the seams and their real and fake implementations, `serve`, the binary | D-Bus, Wayland, PipeWire, files |
 
 `transom-core` depends on `thiserror` only. It reaches no zbus, tokio, pipewire, wayland, image
@@ -22,10 +22,11 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 ## 2. Layout
 
 ```
-crates/transom-core/src/{lib, screencast, restore, choice, inhibit, settings_values}.rs
+crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, settings_values}.rs
 crates/transom/src/{lib, main, error, chooser, screenshot, remote_desktop, settings, inhibit}.rs
+                   screenshot/{layout, color}.rs
                    screencast/{mod, session, stream, pipewire, restore}.rs
-                   capture/{mod, fake, output, toplevel}.rs
+                   capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/outputs.rs
 dist/   quire.portal  quire-portals.conf  org.freedesktop.impl.portal.desktop.quire.service  transom.service
 scripts/install.sh   installs the binary, the unit, the D-Bus file and the portal file (standalone; --prefix, --destdir, --bin-dir)
 dev/    up.sh down.sh lib/{jail,chain}.sh accept/*.sh        (the jailed portal chain)
@@ -39,6 +40,8 @@ scripts/check-boundary.sh
 | `capture::CaptureSource` | `ExtCapture` (`OutputCapture`, `ToplevelCapture`) | `FakeCapture` | P2-T2 |
 | `screencast::stream::FrameSink` | `PipewireSink` | `FakeSink` | P2-T2 |
 | `screencast::restore::RestoreStore` | `FileStore` | `MemoryStore` | P2-T2 |
+| `screenshot::OutputLayout` | `LiveLayout` (asks the compositor at each screenshot) | `FixedLayout` | transom-shot |
+| `screenshot::ColorPicker` | `ShellColorPicker` (`org.quire.Shell1.PickColor`) | `FakeColorPicker` | transom-shot |
 | `chooser::Chooser` | `ShellChooser` (calls the shell's picker) | `FakeChooser` | P2-T2 (chooser client) |
 | `settings::AppearanceSource` | `DesktopAppearance` | `FixedAppearance` | P2-T1 |
 | `remote_desktop::Consent` | `ShellConsent` (the chooser path) | `FakeConsent` | P2-T3 |

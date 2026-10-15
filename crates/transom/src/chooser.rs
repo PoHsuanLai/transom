@@ -41,6 +41,8 @@ pub trait Chooser: Send + Sync + std::fmt::Debug {
 /// source and 1 for several; each source is `("output", name)` or `("window", identifier)`; an
 /// empty list means the person cancelled. The shell lists what exists, so the call carries no
 /// candidates.
+///
+/// `PickColor(app_label: s) -> (color: a(ddd))` serves the Screenshot portal's colour picker.
 #[zbus::proxy(
     interface = "org.quire.Shell1",
     default_service = "org.quire.Shell",
@@ -56,6 +58,10 @@ pub trait Shell1 {
         multiple: u32,
         cursor_modes: Vec<u32>,
     ) -> zbus::Result<(Vec<(String, String)>, u32)>;
+
+    /// Show the colour picker and wait for the answer: no tuple is a cancel, one tuple is the
+    /// picked colour as red, green and blue, each 0 to 1.
+    fn pick_color(&self, app_label: &str) -> zbus::Result<Vec<(f64, f64, f64)>>;
 }
 
 /// The real chooser: the desktop shell's picker over the session bus.
@@ -103,23 +109,47 @@ fn multiple_to_wire(multiple: Multiple) -> u32 {
     }
 }
 
-fn call_failed(error: zbus::Error) -> ChooserError {
+pub(crate) fn call_failed(error: zbus::Error) -> ChooserError {
     ChooserError::Call(error.to_string())
 }
 
-/// Whether the bus said the shell is not there (no owner, or nothing that can be started).
-fn nobody_answers(error: &zbus::Error) -> bool {
-    const GONE: [&str; 2] = [
+/// Whether the bus said nobody can answer: the shell is not on the bus (no owner, nothing to
+/// start), or it is there but does not serve the picker yet (it has not exported the object, or
+/// does not know the method).
+pub fn nobody_answers(error: &zbus::Error) -> bool {
+    const GONE: [&str; 5] = [
         "org.freedesktop.DBus.Error.ServiceUnknown",
         "org.freedesktop.DBus.Error.NameHasNoOwner",
+        "org.freedesktop.DBus.Error.UnknownObject",
+        "org.freedesktop.DBus.Error.UnknownInterface",
+        "org.freedesktop.DBus.Error.UnknownMethod",
     ];
     match error {
         zbus::Error::MethodError(name, _, _) => GONE.contains(&name.as_str()),
         zbus::Error::FDO(inner) => matches!(
             **inner,
-            zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_)
+            zbus::fdo::Error::ServiceUnknown(_)
+                | zbus::fdo::Error::NameHasNoOwner(_)
+                | zbus::fdo::Error::UnknownObject(_)
+                | zbus::fdo::Error::UnknownInterface(_)
+                | zbus::fdo::Error::UnknownMethod(_)
         ),
         _ => false,
+    }
+}
+
+/// What a missing picker means for sharing: nobody was asked, so nobody said yes. An answer that
+/// could not be had because there is nobody to ask becomes a cancel, which shares nothing and
+/// is the portal's plain "the person said no". Any other failure is still a failure.
+pub fn unavailable_is_cancel(
+    answer: Result<Option<Choice>, ChooserError>,
+) -> Result<Option<Choice>, ChooserError> {
+    match answer {
+        Err(ChooserError::Unavailable) => {
+            tracing::warn!("no picker is available, so nothing is shared");
+            Ok(None)
+        }
+        other => other,
     }
 }
 

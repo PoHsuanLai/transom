@@ -14,7 +14,7 @@ use std::net::Shutdown;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 
-use transom_core::{CastSource, CursorMode};
+use transom_core::{CastSource, CursorMode, OutputFacts};
 
 pub use fake::FakeCapture;
 
@@ -143,6 +143,12 @@ impl Canceller {
 /// Every output and window that can be captured now, as the compositor lists them.
 pub fn live_sources(display: &DisplayName) -> Result<Vec<CastSource>, CaptureError> {
     wl::Link::connect(display)?.live_sources()
+}
+
+/// Every output the compositor lists now: its name, place in the logical space, mode, turn and
+/// scale. A fresh connection answers each call, so the list is current when it returns.
+pub fn output_facts(display: &DisplayName) -> Result<Vec<OutputFacts>, CaptureError> {
+    wl::Link::connect(display)?.output_facts()
 }
 
 /// Which display socket to connect to: empty for the session's own, else an absolute socket path.

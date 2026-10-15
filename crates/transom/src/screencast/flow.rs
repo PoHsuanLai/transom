@@ -19,7 +19,7 @@ use super::run::Share;
 use super::session::{Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
 use crate::capture::{self, DisplayName};
-use crate::chooser::Chooser;
+use crate::chooser::{Chooser, unavailable_is_cancel};
 
 /// The answer to a Start call, before it becomes wire values.
 #[derive(Debug)]
@@ -190,7 +190,8 @@ impl Shared {
         outcome
     }
 
-    /// Ask the person; `Err` when they could not be asked or the answer was not acceptable.
+    /// Ask the person; `Err` when the question failed or the answer was not acceptable. With no
+    /// shell to ask the answer is a cancel, never a share.
     async fn ask(&self, selection: &Selection, app_id: &str) -> Result<Option<Choice>, ()> {
         let request = ChoiceRequest {
             kinds: selection.kinds,
@@ -198,7 +199,7 @@ impl Shared {
             cursor_modes: selection.cursor_modes.clone(),
             app_label: app_label(app_id),
         };
-        match self.chooser.pick(&request).await {
+        match unavailable_is_cancel(self.chooser.pick(&request).await) {
             Ok(Some(choice)) => request
                 .accept(choice.sources, choice.cursor)
                 .map(Some)

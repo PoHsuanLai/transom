@@ -5,6 +5,8 @@
 //! back with plain reads, so no mapping (and no `unsafe`) is needed here. GPU buffers are not
 //! asked for: the constraint events that offer them are ignored.
 
+mod outputs;
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsFd;
@@ -32,6 +34,7 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
 };
 
+use self::outputs::SeenOutput;
 use super::{
     Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat,
 };
@@ -79,7 +82,7 @@ struct FrameState {
 /// Everything the event handlers write to.
 #[derive(Debug, Default)]
 pub(super) struct Wl {
-    outputs: BTreeMap<u32, String>,
+    outputs: BTreeMap<u32, SeenOutput>,
     toplevels: Vec<SeenToplevel>,
     pending: Constraints,
     current: Option<Constraints>,
@@ -169,9 +172,12 @@ impl Link {
             bound.push((global, output));
         }
         self.roundtrip()?;
-        let found = bound
-            .into_iter()
-            .find(|(global, _)| self.wl.outputs.get(global).is_some_and(|n| n == name));
+        let found = bound.into_iter().find(|(global, _)| {
+            self.wl
+                .outputs
+                .get(global)
+                .is_some_and(|o| o.name.as_deref() == Some(name))
+        });
         found.map(|(_, output)| output).ok_or(CaptureError::Ended)
     }
 
@@ -202,7 +208,7 @@ impl Link {
             .wl
             .outputs
             .values()
-            .cloned()
+            .filter_map(|o| o.name.clone())
             .map(CastSource::Output)
             .collect();
         sources.extend(
@@ -534,21 +540,6 @@ ignore_events! {
     ExtOutputImageCaptureSourceManagerV1, ();
     ExtForeignToplevelImageCaptureSourceManagerV1, ();
     ExtImageCopyCaptureManagerV1, ();
-}
-
-impl Dispatch<wl_output::WlOutput, OutputId> for Wl {
-    fn event(
-        state: &mut Self,
-        _: &wl_output::WlOutput,
-        event: wl_output::Event,
-        id: &OutputId,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_output::Event::Name { name } = event {
-            state.outputs.insert(id.0, name);
-        }
-    }
 }
 
 impl Dispatch<ExtForeignToplevelListV1, ()> for Wl {

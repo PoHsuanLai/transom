@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use transom::capture::DisplayName;
 use transom::chooser::ShellChooser;
 use transom::screencast::restore::FileStore;
-use transom::screenshot::{ExtOpen, FixedLayout, OutputGrab, ScreenshotSetup};
+use transom::screenshot::{ExtOpen, LiveLayout, OutputGrab, ScreenshotSetup, ShellColorPicker};
 use transom::settings::DesktopAppearance;
 use transom::{Parts, serve};
 
@@ -55,11 +55,11 @@ fn appearance_file() -> PathBuf {
     base.join("quire").join("appearance.toml")
 }
 
-/// Screenshots: the compositor on `$WAYLAND_DISPLAY`, files in `$HOME/Pictures`, named with the
-/// time the portal started. The list of outputs is empty until the capture side can list them
-/// (see `FINDINGS.md`), so a screenshot is answered as failed until then.
+/// Screenshots: the compositor the session's own display names (found the way Wayland clients
+/// find theirs), files in `$HOME/Pictures`, named with the time the portal started. The outputs
+/// are asked of the compositor at each screenshot, so a screen plugged in or out is accounted
+/// for. The colour picker is the shell's.
 fn screenshots() -> ScreenshotSetup {
-    let display = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_owned());
     let pictures = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Pictures"))
         .unwrap_or_default();
@@ -69,10 +69,11 @@ fn screenshots() -> ScreenshotSetup {
         .unwrap_or_default();
     ScreenshotSetup::new(
         Box::new(OutputGrab::new(
-            Box::new(FixedLayout::default()),
-            Box::new(ExtOpen(DisplayName(display))),
+            Box::new(LiveLayout(DisplayName::session())),
+            Box::new(ExtOpen(DisplayName::session())),
         )),
         pictures,
         stamp,
     )
+    .with_picker(Box::new(ShellColorPicker::new()))
 }

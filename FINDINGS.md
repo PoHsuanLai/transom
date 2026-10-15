@@ -10,10 +10,10 @@ One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a Pipe
 
 ## Open items
 
-1. **The shell side of the chooser does not exist yet.** `org.quire.Shell1.PickCaptureSource` is
-   frozen here as the client (`chooser.rs`, the `Shell1` proxy): `(app_label: s, kinds: u,
-   multiple: u, cursor_modes: au) -> (sources: a(ss), cursor: u)` on name `org.quire.Shell`, path
-   `/org/quire/Shell1`. The shell serves it.
+1. **The shell side of the chooser.** `org.quire.Shell1.PickCaptureSource` is the client in `chooser.rs` (the
+   `Shell1` proxy): `(app_label: s, kinds: u, multiple: u, cursor_modes: au) -> (sources: a(ss), cursor: u)` on name
+   `org.quire.Shell`, path `/org/quire/Shell1`. sill serves it since its p2-ch lane (checked against sill's source on
+   2026-10-15, see "transom-shot" below). Closed on this side; the jailed chain's fake shell still stands in for sill.
 2. **Settings source.** `DesktopAppearance` reads `quire/appearance.toml` with a small parser of its
    own (`settings::parse_appearance`: `theme` and `accent` in `[appearance]`; no contrast key exists
    in the document yet). quire's `ds-settings` (v0.3.16) was not added: it pulls `ds-core`, `ds-style`
@@ -32,11 +32,9 @@ One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a Pipe
    `interactive`, `target` and `permission_store_checked` are read-only hints and are ignored.
    `dist/` matches the installed `portals.conf(5)` and portal-file format. Still to re-read: ScreenCast
    and RemoteDesktop (P2-T2, P2-T3).
-7. **Screenshot cannot list outputs.** `screenshot::OutputLayout` (which outputs exist, where) has only
-   `FixedLayout`; `main.rs` passes an empty one, so a screenshot is answered as failed until
-   `capture/` offers a listing (names and positions) for the real layout. The Inhibit effect talks to
-   the login manager on the system bus (`LogindInhibitor`); the compositor's idle-inhibit is not used.
-   `PickColor` answers as cancelled until the shell offers a picker.
+7. **Screenshot outputs.** Closed 2026-10-15 (transom-shot, below): `screenshot::LiveLayout` asks the compositor for
+   the outputs at each screenshot. The Inhibit effect talks to the login manager on the system bus
+   (`LogindInhibitor`); the compositor's idle-inhibit is not used. `PickColor` is now asked of the shell (below).
 
 ## ScreenCast (P2-T2) facts and asks
 
@@ -107,3 +105,71 @@ Not compiled; the orchestrator gates. `remote_desktop.rs` has no `todo!()`.
   side. (b) ScreenCast Start needs `org.quire.Shell1.PickCaptureSource` served by sill (open item 1);
   without it a browser's share dialog never gets a source. (c) `PickColor` is cancelled until the shell offers
   a picker.
+
+## transom-shot: screenshot layout, shell asks (2026-10-15)
+
+Not compiled; the orchestrator gates.
+
+- **Layout.** `main.rs` now passes `LiveLayout(DisplayName::session())` and `ExtOpen(DisplayName::session())`. The old
+  code passed `$WAYLAND_DISPLAY` as the display name, but a name is an absolute socket path (empty = the session's own),
+  so even with a layout every capture would have failed with "a display name must be a socket path". Each screenshot
+  connects afresh (`capture::output_facts`), binds every `wl_output` (v1 to v4), reads name, geometry (logical x, y and
+  transform), current mode and scale, and hands them to `transom_core::arrange`. Nothing is cached, so outputs that come
+  and go, move or change scale are current at the next screenshot.
+- **Arrangement (`transom-core/src/layout.rs`).** Logical size = current mode (swapped for the odd transform values)
+  over the integer scale, rounded to nearest. The picture is laid out at the finest scale among the outputs: each output
+  covers its logical rectangle times that scale, a coarser one is enlarged (nearest pixel) to fit, so screens of mixed
+  sharpness share one picture without losing detail. An output with no mode, and a mirror (same place and size as an
+  earlier one), is skipped. All outputs together, at their logical positions, is the macOS Cmd+Shift+3 result; the
+  portal's `interactive`, `modal` and `target` options stay ignored (nothing is asked; `AvailableTargets` says the whole
+  screen), so an interactive request gets the same full-screen picture.
+- **Limit: fractional scales.** `xdg_output` (exact logical size and fractional scale) needs the `wayland-protocols`
+  feature `unstable`, which is a manifest edit this lane may not make. With `wl_output` alone casement's fractional scale
+  arrives as its ceiling (1.5 as 2), so such an output's logical size is under-estimated, the picture is a little small
+  and the gap between neighbours is not exact. All-1x and all-2x layouts, and mixes of them, are exact. Ask for the
+  orchestrator: enable `wayland-protocols` `unstable` for transom, then bind `zxdg_output_manager_v1` in
+  `capture/wl/outputs.rs` and prefer its logical position and size (and use `wp_fractional_scale` or the ratio of mode
+  to logical size for the scale).
+- **ScreenCast without a shell.** When the shell is not on the bus, or is on it but has not exported
+  `/org/quire/Shell1` yet (`UnknownObject`, `UnknownInterface`, `UnknownMethod`), Start is answered as cancelled
+  (response 1) and nothing is shared (`chooser::unavailable_is_cancel`). Any other failure of the question (access
+  denied, a question already open, a malformed answer) stays response 2. Remote desktop consent keeps its refusal.
+- **PickColor.** The Screenshot interface calls `org.quire.Shell1.PickColor` (the `Shell1` proxy); the portal result is
+  `color: (ddd)`. No shell, or a cancel, is response 1; a malformed answer is response 2.
+- **Acceptance scripts (not run).** `dev/accept/screenshot.sh` needs no shell (Screenshot never asks one) and needs no
+  change: it joins the compositor session, so transom's session display is the compositor's; with scale 1 or 2 the
+  expected `TRANSOM_OUTPUT_SIZE` is the output's mode size, which is what the picture now has. `dev/accept/
+  screencast-output.sh` starts its own fake shell (`start_fake_shell`), as do `chooser.sh` and `screencast-window.sh`; its
+  step 1 of `chooser.sh` (no shell) still passes with response 1. `dev/lib/portal_client.py`'s fake shell now also serves
+  `PickColor` (a fixed colour, a cancel for `none`); no script exercises it yet.
+- **Environment.** transom reads the display the way Wayland clients do (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`), so the
+  D-Bus-activated process needs both: the session must run `dbus-update-activation-environment --systemd
+  WAYLAND_DISPLAY XDG_RUNTIME_DIR` (or the unit must import them). The screencast path had the same need already.
+
+### Asks for sill
+
+1. **`org.quire.Shell1.PickCaptureSource` is already served** by sill (`sill_services::capture_pick`, exported on the
+   seat connection that owns `org.quire.Shell`); its signature, caller check and `("output", name)` / `("window", id)`
+   sources match transom's client. Nothing to change. Two notes: (a) until the seat exists the object is absent and
+   transom now treats that as "nobody to ask" and cancels; (b) the call has no timeout on either side, it waits on the
+   person.
+2. **`org.quire.Shell1.PickColor` is not served and is not anywhere in sill.** The shell must serve, on the same object
+   (`/org/quire/Shell1`, interface `org.quire.Shell1`, name `org.quire.Shell`):
+
+   ```
+   PickColor(app_label: s) -> (color: a(ddd))
+   ```
+   - `app_label`: the app's name as the person knows it ("Firefox"), the same label `PickCaptureSource` gets.
+   - Returns an array of zero or one tuple. Empty is a cancel. One tuple is `(red, green, blue)`, each a double in
+     0.0 to 1.0, sRGB. Anything else (two tuples, a channel outside 0 to 1, NaN) is treated as a bad answer and the
+     portal call fails.
+   - Behaviour: show an on-screen eyedropper over the live screen (magnifier loupe, click to pick, Escape to cancel, as
+     macOS Digital Color Meter / the system colour well's eyedropper). Block until the person picks or cancels; no timeout
+     (transom waits). One question at a time: a second call while one is open gets `org.freedesktop.DBus.Error.
+     LimitsExceeded`. The caller leaving the bus takes the eyedropper down.
+   - Caller check, as for `PickCaptureSource`: only the owner of `org.freedesktop.impl.portal.desktop.quire` may call
+     (`AccessDenied` otherwise).
+   - Until sill serves it, transom answers every `PickColor` as cancelled when the object is absent
+     (`UnknownObject`/`UnknownMethod`), so no app breaks.
+3. **Remote control consent (from p2-t3, still open).** `AskRemoteControl(app_label: s, devices: u) -> (allowed: u)`
+   (1 yes, 0 no), same object and caller check; today transom asks `PickCaptureSource` and reads any pick as yes.

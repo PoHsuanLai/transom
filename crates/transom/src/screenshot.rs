@@ -3,18 +3,31 @@
 //! A screenshot grabs one frame of every output through the [`ScreenGrab`] seam, lays the frames
 //! out on one canvas, encodes a PNG and writes it into the pictures folder the service was given.
 //! Only this file names the image encoder.
+//!
+//! `layout` says which outputs there are and where each sits (the real one asks the
+//! compositor each time); `color` is the colour picker the shell shows.
+
+mod color;
+mod layout;
+
+pub use color::{ColorPicker, FakeColorPicker, NoColorPicker, ShellColorPicker, color_from_wire};
+pub use layout::{FixedLayout, LiveLayout, OutputLayout, OutputPlacement};
 
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use transom_core::{Rgb, SettingValue};
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use crate::capture::{
-    CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData, PixelFormat,
+    CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData,
+    PhysicalSizeWire, PixelFormat,
 };
-use crate::screencast::Dict;
+use crate::chooser::ChooserError;
+use crate::screencast::{Dict, options::app_label};
+use crate::settings::wire_value;
 
 /// Why a screenshot could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -44,34 +57,6 @@ pub enum ShotError {
     /// The pictures folder is not an absolute path, so the picture has no address.
     #[error("the pictures folder must be an absolute path")]
     RelativePath,
-}
-
-/// Where one output sits on the canvas, in pixels (the canvas's origin is the top-left of the
-/// outputs together, so negative coordinates are fine).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputPlacement {
-    /// The output's name, as the capture opens it.
-    pub name: String,
-    /// Left edge.
-    pub x: i32,
-    /// Top edge.
-    pub y: i32,
-}
-
-/// The seam: which outputs exist and where they sit.
-pub trait OutputLayout: Send + Sync + std::fmt::Debug {
-    /// Every output, with its place.
-    fn outputs(&self) -> Result<Vec<OutputPlacement>, ShotError>;
-}
-
-/// A layout given up front.
-#[derive(Clone, Debug, Default)]
-pub struct FixedLayout(pub Vec<OutputPlacement>);
-
-impl OutputLayout for FixedLayout {
-    fn outputs(&self) -> Result<Vec<OutputPlacement>, ShotError> {
-        Ok(self.0.clone())
-    }
 }
 
 /// The seam: how to start capturing one named output.
@@ -130,8 +115,22 @@ pub struct Placed {
     pub x: i32,
     /// Top edge on the canvas.
     pub y: i32,
+    /// The size it covers on the canvas; a frame of another size is stretched to fit.
+    pub size: PhysicalSizeWire,
     /// The frame.
     pub frame: CapturedFrame,
+}
+
+impl Placed {
+    /// A frame at `(x, y)` covering exactly its own size.
+    pub fn unscaled(x: i32, y: i32, frame: CapturedFrame) -> Self {
+        Self {
+            x,
+            y,
+            size: frame.size,
+            frame,
+        }
+    }
 }
 
 /// The seam: one frame of every output.
@@ -164,6 +163,7 @@ impl ScreenGrab for OutputGrab {
                 Ok::<_, ShotError>(Placed {
                     x: place.x,
                     y: place.y,
+                    size: place.size,
                     frame,
                 })
             })
@@ -187,6 +187,7 @@ pub struct ScreenshotSetup {
     grab: Box<dyn ScreenGrab>,
     pictures: PathBuf,
     stamp: String,
+    picker: Box<dyn ColorPicker>,
 }
 
 impl ScreenshotSetup {
@@ -197,7 +198,14 @@ impl ScreenshotSetup {
             grab,
             pictures,
             stamp,
+            picker: Box::new(NoColorPicker),
         }
+    }
+
+    /// This setup with `picker` showing the colour picker (without one, every pick is a cancel).
+    pub fn with_picker(mut self, picker: Box<dyn ColorPicker>) -> Self {
+        self.picker = picker;
+        self
     }
 
     /// A setup with no screens: every screenshot fails.
@@ -229,12 +237,12 @@ pub fn compose(shots: &[Placed]) -> Result<Canvas, ShotError> {
     };
     let right = shots
         .iter()
-        .map(|s| i64::from(s.x) + i64::from(s.frame.size.width))
+        .map(|s| i64::from(s.x) + i64::from(s.size.width))
         .max()
         .unwrap_or(left);
     let bottom = shots
         .iter()
-        .map(|s| i64::from(s.y) + i64::from(s.frame.size.height))
+        .map(|s| i64::from(s.y) + i64::from(s.size.height))
         .max()
         .unwrap_or(top);
     let width = u32::try_from(right - left).map_err(|_| ShotError::TooLarge)?;
@@ -249,7 +257,7 @@ pub fn compose(shots: &[Placed]) -> Result<Canvas, ShotError> {
             usize::try_from(i64::from(shot.x) - left).map_err(|_| ShotError::TooLarge)?,
             usize::try_from(i64::from(shot.y) - top).map_err(|_| ShotError::TooLarge)?,
         );
-        paint(&mut rgba, width as usize, origin, &shot.frame)?;
+        paint(&mut rgba, width as usize, origin, shot.size, &shot.frame)?;
     }
     Ok(Canvas {
         width,
@@ -258,11 +266,13 @@ pub fn compose(shots: &[Placed]) -> Result<Canvas, ShotError> {
     })
 }
 
-/// Copy one frame onto the canvas at `origin`, as opaque RGBA.
+/// Copy one frame onto the canvas at `origin`, as opaque RGBA, stretched (nearest pixel) to
+/// cover `size`.
 fn paint(
     canvas: &mut [u8],
     canvas_width: usize,
     origin: (usize, usize),
+    size: PhysicalSizeWire,
     frame: &CapturedFrame,
 ) -> Result<(), ShotError> {
     let FrameData::Shm {
@@ -278,25 +288,25 @@ fn paint(
         frame.size.height as usize,
         *stride as usize,
     );
-    if stride < w * 4 || bytes.len() < stride * h {
+    if w == 0 || h == 0 || stride < w * 4 || bytes.len() < stride * h {
         return Err(ShotError::BadFrame);
     }
+    let (cover_w, cover_h) = (size.width as usize, size.height as usize);
     // Memory order of the channels in each 4-byte pixel: where red, green and blue sit.
     let [r, g, b] = match format {
         PixelFormat::Argb8888 | PixelFormat::Xrgb8888 => [2, 1, 0],
         PixelFormat::Abgr8888 | PixelFormat::Xbgr8888 => [0, 1, 2],
     };
-    for row in 0..h {
-        let source = &bytes[row * stride..row * stride + w * 4];
+    // The source column each covered column shows.
+    let columns: Vec<usize> = (0..cover_w).map(|x| x * w / cover_w).collect();
+    for row in 0..cover_h {
+        let from_row = row * h / cover_h;
+        let source = &bytes[from_row * stride..from_row * stride + w * 4];
         let start = ((origin.1 + row) * canvas_width + origin.0) * 4;
-        let target = &mut canvas[start..start + w * 4];
-        for (to, from) in target
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(source.as_chunks::<4>().0)
-        {
-            *to = [from[r], from[g], from[b], 255];
+        let target = &mut canvas[start..start + cover_w * 4];
+        for (to, &column) in target.chunks_exact_mut(4).zip(&columns) {
+            let from = &source[column * 4..column * 4 + 4];
+            to.copy_from_slice(&[from[r], from[g], from[b], 255]);
         }
     }
     Ok(())
@@ -370,6 +380,11 @@ fn owned(value: impl Into<Value<'static>>) -> Option<OwnedValue> {
     OwnedValue::try_from(value.into()).ok()
 }
 
+/// A colour as the portal's `color` result carries it: `(ddd)`.
+fn wire_color(color: Rgb) -> Option<OwnedValue> {
+    wire_value(SettingValue::Rgb(color)).and_then(|v| OwnedValue::try_from(v).ok())
+}
+
 /// The served interface.
 #[derive(Debug)]
 pub struct ScreenshotService {
@@ -405,8 +420,9 @@ const RESPONSE_FAILED: u32 = 2;
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
 impl ScreenshotService {
-    /// Take a screenshot of every screen; the reply's `uri` names the PNG written to the
-    /// person's pictures. The `interactive` and `modal` hints are not used: nothing is asked.
+    /// Take a screenshot of every screen, laid out as the screens sit; the reply's `uri` names the
+    /// PNG written to the person's pictures. The `interactive`, `modal` and `target` hints are
+    /// not used: nothing is asked, and the whole screen is what `AvailableTargets` offers.
     async fn screenshot(
         &self,
         handle: ObjectPath<'_>,
@@ -441,8 +457,8 @@ impl ScreenshotService {
         }
     }
 
-    /// Let the person pick a colour from the screen; the reply's `color` is `(ddd)`. Until the
-    /// shell offers a picker this is answered as cancelled.
+    /// Let the person pick a colour from the screen; the reply's `color` is `(ddd)`. The shell
+    /// shows the picker. With no shell to ask, or a cancel, the reply is cancelled.
     async fn pick_color(
         &self,
         handle: ObjectPath<'_>,
@@ -450,8 +466,26 @@ impl ScreenshotService {
         parent_window: &str,
         options: Dict,
     ) -> (u32, Dict) {
-        let _ = (handle, app_id, parent_window, options);
-        (RESPONSE_CANCELLED, Dict::new())
+        let _ = (handle, parent_window, options);
+        match self.setup.picker.pick(&app_label(app_id)).await {
+            Ok(Some(color)) => match wire_color(color) {
+                Some(value) => {
+                    let mut results = Dict::new();
+                    results.insert("color".to_owned(), value);
+                    (RESPONSE_OK, results)
+                }
+                None => (RESPONSE_FAILED, Dict::new()),
+            },
+            Ok(None) => (RESPONSE_CANCELLED, Dict::new()),
+            Err(ChooserError::Unavailable) => {
+                tracing::warn!("no colour picker is available");
+                (RESPONSE_CANCELLED, Dict::new())
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the colour picker failed");
+                (RESPONSE_FAILED, Dict::new())
+            }
+        }
     }
 
     /// The screenshot targets offered: the whole screen.
