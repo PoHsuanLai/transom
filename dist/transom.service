@@ -10,6 +10,17 @@ BusName=org.freedesktop.impl.portal.desktop.quire
 ExecStart=/usr/libexec/transom
 Restart=on-failure
 RestartSec=2
+# This process can capture the screen and reads the person's home, so it is shut in as far as it
+# can be without a mount namespace (a user unit gets one only where unprivileged user namespaces
+# are allowed, which Ubuntu 24.04 restricts): it may not gain privileges, speak anything but local
+# sockets (the bus, the display, PipeWire), or switch its execution domain. ProtectSystem=strict,
+# with the pictures folder and the state folder writable, would also fit once every supported
+# distribution allows mount namespaces for user units.
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=graphical-session.target
