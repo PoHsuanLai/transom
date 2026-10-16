@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use transom::capture::DisplayName;
 use transom::link::BusLink;
+use transom::names::AppNames;
 use transom::screencast::restore::FileStore;
 use transom::screenshot::{ExtOpen, LiveLayout, OutputGrab, ScreenshotSetup, ShellColorPicker};
 use transom::settings::DesktopAppearance;
@@ -18,7 +19,8 @@ async fn main() -> ExitCode {
     let parts = Parts::real(
         FileStore::new(state_file()),
         DesktopAppearance::at(appearance_file()),
-    );
+    )
+    .with_names(app_names());
     let parts = {
         let setup = screenshots(parts.link());
         parts.with_screenshots(setup)
@@ -44,6 +46,46 @@ fn state_file() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("transom").join("restore")
+}
+
+/// Where an app's own name is found: the desktop entries in the data directories (the person's, the
+/// flatpak exports, then the system's), preferring the person's language.
+fn app_names() -> AppNames {
+    let absolute = |p: &PathBuf| p.is_absolute();
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(absolute)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let system = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|dirs| !dirs.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = data_home {
+        dirs.push(home.join("flatpak/exports/share"));
+        dirs.insert(0, home);
+    }
+    dirs.extend(system.split(':').map(PathBuf::from).filter(absolute));
+    dirs.push(PathBuf::from("/var/lib/flatpak/exports/share"));
+    AppNames::new(dirs, locales())
+}
+
+/// The person's locales, most specific first: `zh_TW`, then `zh`. None for the plain C locale.
+fn locales() -> Vec<String> {
+    let chosen = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .find(|value| !value.is_empty());
+    let Some(value) = chosen else {
+        return Vec::new();
+    };
+    let full = value.split(['.', '@']).next().unwrap_or("").to_owned();
+    let language = full.split('_').next().unwrap_or("").to_owned();
+    let mut found = vec![full];
+    found.push(language);
+    found.dedup();
+    found.retain(|l| !l.is_empty() && l != "C" && l != "POSIX");
+    found
 }
 
 /// Where the desktop keeps its appearance: `$XDG_CONFIG_HOME/quire/appearance.toml`, or under

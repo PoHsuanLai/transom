@@ -40,6 +40,14 @@ impl ScreenCastService {
             shared: Arc::new(Shared::new(chooser, restore)),
         }
     }
+
+    /// This service showing apps by the names `names` finds. Call it before the service is shared.
+    pub fn with_names(mut self, names: crate::names::AppNames) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.names = names;
+        }
+        self
+    }
 }
 
 /// The object the portal frontend closes a session through, served at the session's path:

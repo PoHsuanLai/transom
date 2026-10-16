@@ -13,13 +13,14 @@ use transom_core::{
 };
 use zbus::Connection;
 
-use super::options::{self, app_label};
+use super::options;
 use super::restore::RestoreStore;
 use super::run::Share;
 use super::session::{Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
 use crate::capture::{self, DisplayName};
 use crate::chooser::{Chooser, unavailable_is_cancel};
+use crate::names::AppNames;
 
 /// The answer to a Start call, before it becomes wire values.
 #[derive(Debug)]
@@ -53,6 +54,8 @@ pub(super) struct Shared {
     /// Held while the token book is read, changed and written, so two Starts do not lose a token.
     book_lock: Mutex<()>,
     display: DisplayName,
+    /// Where apps' own names are found.
+    pub names: AppNames,
 }
 
 /// Lock, and carry on with the data if another thread panicked while holding it.
@@ -71,6 +74,7 @@ impl Shared {
             restore,
             book_lock: Mutex::new(()),
             display: DisplayName::session(),
+            names: AppNames::none(),
         }
     }
 
@@ -197,7 +201,7 @@ impl Shared {
             kinds: selection.kinds,
             multiple: selection.multiple,
             cursor_modes: selection.cursor_modes.clone(),
-            app_label: app_label(app_id),
+            app_label: self.names.label(app_id),
         };
         match unavailable_is_cancel(self.chooser.pick(&request).await) {
             Ok(Some(choice)) => request

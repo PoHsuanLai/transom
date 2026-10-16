@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use transom::capture::PhysicalSizeWire;
 use transom::screencast::Dict;
 use transom::screencast::options::{
-    StreamInfo, app_label, cursor_modes, granted_results, restore_data, restore_token, selection,
+    StreamInfo, cursor_modes, granted_results, restore_data, restore_token, selection,
 };
 use transom_core::{
     CastSource, CursorMode, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
@@ -140,18 +140,4 @@ fn a_granted_reply_carries_streams_and_the_kept_token() {
         u32::try_from(kept.get("persist_mode").expect("persist_mode")).ok(),
         Some(2)
     );
-}
-
-#[test]
-fn an_app_is_named_the_way_a_person_would_say_it() {
-    for (id, label) in [
-        ("org.example.Meet", "Meet"),
-        ("org.gnome.Screen-Recorder", "Screen Recorder"),
-        ("com.example.my_app.desktop", "My app"),
-        ("firefox", "Firefox"),
-        ("", "An app"),
-        (".", "An app"),
-    ] {
-        assert_eq!(app_label(id), label, "id {id:?}");
-    }
 }

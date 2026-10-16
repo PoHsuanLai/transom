@@ -13,7 +13,8 @@ use zbus::zvariant::ObjectPath;
 use crate::BoxFuture;
 use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
 use crate::link::BusLink;
-use crate::screencast::{Dict, options::app_label};
+use crate::names::{AppNames, Layout, tidy_to};
+use crate::screencast::Dict;
 
 /// The button that says yes, when the app's request names none.
 const GRANT_LABEL: &str = "Allow";
@@ -95,31 +96,41 @@ pub struct Question {
     pub deny_label: String,
 }
 
+/// The longest headline taken from an app's request, in characters.
+const MAX_TITLE: usize = 128;
+/// The longest line under the headline.
+const MAX_SUBTITLE: usize = 256;
+/// The longest explanation.
+const MAX_BODY: usize = 1024;
+/// The longest button label.
+const MAX_BUTTON: usize = 32;
+
 impl Question {
-    /// The question a call carries: the texts as given, the app by its own name, and the buttons
-    /// the request names (or "Allow" and "Don't Allow").
+    /// The question a call carries: the texts as given but cleaned and cut (an app wrote them), the
+    /// app by `app_label` (already its own name, see [`AppNames::label`]), and the buttons the
+    /// request names (or "Allow" and "Don't Allow").
     pub fn from_call(
-        app_id: &str,
+        app_label: &str,
         title: &str,
         subtitle: &str,
         body: &str,
         options: &Dict,
     ) -> Self {
-        let label = |key: &str, fallback: &str| {
+        let button = |key: &str, fallback: &str| {
             options
                 .get(key)
                 .and_then(|v| <&str>::try_from(v).ok())
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or(fallback)
-                .to_owned()
+                .map(|s| tidy_to(s, MAX_BUTTON, Layout::OneLine))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| fallback.to_owned())
         };
         Self {
-            app_label: app_label(app_id),
-            title: title.to_owned(),
-            subtitle: subtitle.to_owned(),
-            body: body.to_owned(),
-            grant_label: label("grant_label", GRANT_LABEL),
-            deny_label: label("deny_label", DENY_LABEL),
+            app_label: app_label.to_owned(),
+            title: tidy_to(title, MAX_TITLE, Layout::OneLine),
+            subtitle: tidy_to(subtitle, MAX_SUBTITLE, Layout::OneLine),
+            body: tidy_to(body, MAX_BODY, Layout::Paragraphs),
+            grant_label: button("grant_label", GRANT_LABEL),
+            deny_label: button("deny_label", DENY_LABEL),
         }
     }
 }
@@ -222,12 +233,23 @@ impl Asker for FakeAsker {
 #[derive(Debug)]
 pub struct AccessService {
     asker: Box<dyn Asker>,
+    names: AppNames,
 }
 
 impl AccessService {
-    /// A service whose questions go to `asker`.
+    /// A service whose questions go to `asker`; apps are shown by their ids until
+    /// [`AccessService::with_names`] says where their names are.
     pub fn new(asker: Box<dyn Asker>) -> Self {
-        Self { asker }
+        Self {
+            asker,
+            names: AppNames::none(),
+        }
+    }
+
+    /// This service showing apps by the names `names` finds.
+    pub fn with_names(mut self, names: AppNames) -> Self {
+        self.names = names;
+        self
     }
 
     /// Ask the question a call carries and give the reply: the response code and no results.
@@ -252,7 +274,8 @@ impl AccessService {
         options: Dict,
     ) -> (u32, Dict) {
         let _ = (handle, parent_window);
-        let question = Question::from_call(app_id, title, subtitle, body, &options);
+        let question =
+            Question::from_call(&self.names.label(app_id), title, subtitle, body, &options);
         self.decide(&question).await
     }
 

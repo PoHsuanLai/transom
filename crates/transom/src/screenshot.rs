@@ -26,7 +26,8 @@ use crate::capture::{
     PhysicalSizeWire, PixelFormat,
 };
 use crate::chooser::ChooserError;
-use crate::screencast::{Dict, options::app_label};
+use crate::names::AppNames;
+use crate::screencast::Dict;
 use crate::settings::wire_value;
 
 /// Why a screenshot could not be made.
@@ -188,6 +189,7 @@ pub struct ScreenshotSetup {
     pictures: PathBuf,
     stamp: String,
     picker: Box<dyn ColorPicker>,
+    names: AppNames,
 }
 
 impl ScreenshotSetup {
@@ -199,7 +201,14 @@ impl ScreenshotSetup {
             pictures,
             stamp,
             picker: Box::new(NoColorPicker),
+            names: AppNames::none(),
         }
+    }
+
+    /// This setup showing apps by the names `names` finds.
+    pub fn with_names(mut self, names: AppNames) -> Self {
+        self.names = names;
+        self
     }
 
     /// This setup with `picker` showing the colour picker (without one, every pick is a cancel).
@@ -467,7 +476,12 @@ impl ScreenshotService {
         options: Dict,
     ) -> (u32, Dict) {
         let _ = (handle, parent_window, options);
-        match self.setup.picker.pick(&app_label(app_id)).await {
+        match self
+            .setup
+            .picker
+            .pick(&self.setup.names.label(app_id))
+            .await
+        {
             Ok(Some(color)) => match wire_color(color) {
                 Some(value) => {
                     let mut results = Dict::new();

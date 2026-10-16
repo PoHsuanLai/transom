@@ -7,6 +7,7 @@ mod capture;
 mod chooser;
 mod fill;
 mod inhibit;
+mod names;
 mod options;
 mod pixels;
 mod remote_desktop;

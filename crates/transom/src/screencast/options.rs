@@ -152,20 +152,3 @@ pub fn granted_results(
     }
     Ok(results)
 }
-
-/// The app's name as a person would say it, from the id the portal frontend passes: the last
-/// part of a reverse-DNS id with separators turned to spaces and a capital first letter. An app
-/// with no id (one that is not sandboxed) is "An app".
-pub fn app_label(app_id: &str) -> String {
-    let name = app_id.strip_suffix(".desktop").unwrap_or(app_id);
-    let last = name.rsplit('.').next().unwrap_or("");
-    let spaced: String = last
-        .chars()
-        .map(|c| if matches!(c, '-' | '_') { ' ' } else { c })
-        .collect();
-    let mut letters = spaced.trim().chars();
-    match letters.next() {
-        Some(first) => first.to_uppercase().chain(letters).collect(),
-        None => "An app".to_owned(),
-    }
-}

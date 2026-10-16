@@ -24,6 +24,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use crate::BoxFuture;
 use crate::chooser::{Chooser, ChooserError};
 use crate::link::BusLink;
+use crate::names::AppNames;
 use crate::screencast::Dict;
 use crate::screencast::session::SessionKey;
 
@@ -378,16 +379,25 @@ pub struct RemoteDesktopService {
     book: Arc<Mutex<Book>>,
     consent: Box<dyn Consent>,
     eis: Box<dyn EisHandout>,
+    names: AppNames,
 }
 
 impl RemoteDesktopService {
-    /// A service with no sessions, asking `consent` and getting sockets from `eis`.
+    /// A service with no sessions, asking `consent` and getting sockets from `eis`. Apps are
+    /// shown by their ids until [`RemoteDesktopService::with_names`] says where their names are.
     pub fn new(consent: Box<dyn Consent>, eis: Box<dyn EisHandout>) -> Self {
         Self {
             book: Arc::default(),
             consent,
             eis,
+            names: AppNames::none(),
         }
+    }
+
+    /// This service showing apps by the names `names` finds.
+    pub fn with_names(mut self, names: AppNames) -> Self {
+        self.names = names;
+        self
     }
 
     /// Opens the session `key` for `app_id`. A handle that is already open fails.
@@ -434,8 +444,8 @@ impl RemoteDesktopService {
         let Some((app_id, kinds)) = asked else {
             return failed();
         };
-        let label = if app_id.is_empty() { "An app" } else { &app_id };
-        match self.consent.ask(label, kinds).await {
+        let label = self.names.label(&app_id);
+        match self.consent.ask(&label, kinds).await {
             Ok(ConsentAnswer::Allowed) => {}
             Ok(_) => {
                 self.close(key);

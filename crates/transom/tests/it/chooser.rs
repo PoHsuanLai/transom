@@ -3,6 +3,7 @@ use transom::chooser::{
     Chooser, ChooserError, FakeChooser, answer_from_wire, nobody_answers, source_from_wire,
     source_to_wire, unavailable_is_cancel,
 };
+use transom::names::AppNames;
 use transom::screencast::Dict;
 use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, SourceKinds};
 use zbus::zvariant::{OwnedValue, Value};
@@ -145,13 +146,13 @@ async fn the_access_dialog_asks_the_shell_in_the_apps_words_and_replies_with_its
     options.insert("grant_label".to_owned(), text("Share"));
     options.insert("deny_label".to_owned(), text(" "));
     let question = Question::from_call(
-        "org.example.screen-grab.desktop",
+        &AppNames::none().label("org.example.screen-grab.desktop"),
         "Take a screenshot?",
         "",
         "It can see everything.",
         &options,
     );
-    assert_eq!(question.app_label, "Screen grab");
+    assert_eq!(question.app_label, "org.example.screen-grab");
     assert_eq!(question.grant_label, "Share");
     assert_eq!(
         question.deny_label, "Don\u{2019}t Allow",

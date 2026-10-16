@@ -19,8 +19,11 @@ pub mod access;
 pub mod capture;
 pub mod chooser;
 pub mod error;
+pub(crate) mod fsread;
 pub mod inhibit;
 pub mod link;
+pub mod names;
+pub(crate) mod random;
 pub mod remote_desktop;
 pub mod screencast;
 pub mod screenshot;
@@ -58,6 +61,8 @@ pub struct Parts {
     pub access: Box<dyn access::Asker>,
     /// Takes screenshots; without a setup every screenshot is answered as failed.
     pub screenshots: screenshot::ScreenshotSetup,
+    /// Where apps' own names are found; apps are shown by their ids when it knows nothing.
+    pub names: names::AppNames,
     /// The connection that owns the portal's name, once [`serve`] has built it. The seams that
     /// ask the shell or the compositor hold a copy.
     pub link: link::BusLink,
@@ -82,8 +87,15 @@ impl Parts {
             eis: Box::new(remote_desktop::CasementEis::new(link.clone())),
             access: Box::new(access::ShellAsker::new(link.clone())),
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
+            names: names::AppNames::none(),
             link,
         }
+    }
+
+    /// These parts showing apps by the names `names` finds.
+    pub fn with_names(mut self, names: names::AppNames) -> Self {
+        self.names = names;
+        self
     }
 
     /// The link the real seams ask through, for a seam built outside [`Parts::real`] (the colour
@@ -122,24 +134,28 @@ pub async fn serve_on(
         eis,
         access,
         screenshots,
+        names,
         link,
     } = parts;
     let connection = builder
         .serve_at(
             PORTAL_PATH,
-            screenshot::ScreenshotService::with_setup(screenshots),
+            screenshot::ScreenshotService::with_setup(screenshots.with_names(names.clone())),
         )?
         .serve_at(
             PORTAL_PATH,
-            screencast::ScreenCastService::new(chooser, restore),
+            screencast::ScreenCastService::new(chooser, restore).with_names(names.clone()),
         )?
         .serve_at(
             PORTAL_PATH,
-            remote_desktop::RemoteDesktopService::new(consent, eis),
+            remote_desktop::RemoteDesktopService::new(consent, eis).with_names(names.clone()),
         )?
         .serve_at(PORTAL_PATH, settings::SettingsService::new(appearance))?
         .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
-        .serve_at(PORTAL_PATH, access::AccessService::new(access))?
+        .serve_at(
+            PORTAL_PATH,
+            access::AccessService::new(access).with_names(names),
+        )?
         .build()
         .await?;
     link.attach(connection.clone());
