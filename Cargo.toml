@@ -33,7 +33,7 @@ pipewire = "0.10"
 image = { version = "0.25.6", default-features = false, features = ["png"] }
 # Which program is calling (the portal frontend, the shell), judged against the root-owned caller table.
 # zbus runs on tokio here, so the default executor feature is off. `fake` is a dev-only addition.
-peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.0", default-features = false, features = ["tokio", "desktop"] }
+peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.1", default-features = false, features = ["tokio", "desktop"] }
 proptest = "1"
 tempfile = "3"
 

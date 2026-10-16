@@ -450,7 +450,9 @@ impl RemoteDesktopService {
             .await
     }
 
-    /// Hand the app its EIS socket for this session (one per session).
+    /// Hand the app its EIS socket for this session (one per session). The bus name is spelled
+    /// out: the derived one would be `ConnectToEis`, which no portal frontend calls.
+    #[zbus(name = "ConnectToEIS")]
     async fn connect_to_eis(
         &self,
         session_handle: ObjectPath<'_>,

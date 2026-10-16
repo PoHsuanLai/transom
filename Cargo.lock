@@ -403,6 +403,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
 
 [[package]]
+name = "futures-timer"
+version = "3.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
+
+[[package]]
 name = "futures-util"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,6 +674,39 @@ name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
+
+[[package]]
+name = "peephole"
+version = "0.1.1"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.1#e1b1b6adaff180516f198cf5435e85e4dc36e971"
+dependencies = [
+ "peephole-core",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
+name = "peephole-bus"
+version = "0.1.1"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.1#e1b1b6adaff180516f198cf5435e85e4dc36e971"
+dependencies = [
+ "futures-timer",
+ "peephole",
+ "peephole-core",
+ "thiserror",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
+name = "peephole-core"
+version = "0.1.1"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.1#e1b1b6adaff180516f198cf5435e85e4dc36e971"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "pin-project-lite"
@@ -1206,6 +1245,7 @@ name = "transom"
 version = "0.1.0"
 dependencies = [
  "image",
+ "peephole-bus",
  "pipewire",
  "rustix",
  "tempfile",
