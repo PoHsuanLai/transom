@@ -62,3 +62,30 @@ fn a_changed_size_resizes_the_sink_first() {
     assert_eq!(sink.resizes, vec![size(8, 4)]);
     assert_eq!(sink.received, vec![1, 2, 3]);
 }
+
+#[test]
+fn a_quiet_spell_is_reported_and_hands_the_sink_nothing() {
+    let run = vec![
+        Some(frame(size(4, 2), 1)),
+        None,
+        None,
+        Some(frame(size(4, 2), 2)),
+    ];
+    let mut pump = Pump::new(
+        FakeCapture::scripted(size(4, 2), run),
+        FakeSink::new(PwNode(1)),
+        CursorMode::Hidden,
+    );
+    let outcomes: Vec<_> = (0..5).map(|_| pump.turn().expect("turn")).collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            PumpOutcome::Pushed,
+            PumpOutcome::Quiet,
+            PumpOutcome::Quiet,
+            PumpOutcome::Pushed,
+            PumpOutcome::SourceEnded
+        ]
+    );
+    assert_eq!(pump.into_sink().received, vec![1, 2]);
+}

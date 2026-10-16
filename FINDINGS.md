@@ -194,3 +194,48 @@ Not compiled; the orchestrator gates.
    - The Access portal's `icon` and `choices` options are not forwarded or answered; the reply carries no results.
    - The desktop's own `quire-portals.conf` (desktop/session) must also route
      `org.freedesktop.impl.portal.Access=quire`.
+
+## transom-repush: a still screen still gives a stream (2026-10-16)
+
+Written without a build or a run: nothing here has been compiled or tried in the jail. Source of the symptoms:
+`screencast-output.sh` steps 3, 4 and 5 against casement's headless output; the casement lane's analysis
+(cas36) showed casement is correct (a still output has no damage, so the second capture is parked).
+
+**A. Frames from a still source (fixed in transom).**
+- `transom_core::pacing` decides: `Negotiated::repeat_gap_ns` (the stream's frame gap, within 1/60 s and 1 s; an
+  open rate fills at 5 a second or its ceiling if slower) and `decide(Held, gap) -> Step`. A picture that has not gone
+  out is sent at once; a sent one is sent again only after a full gap. Table tests: `transom-core/tests/it/pacing.rs`.
+- `screencast/pipewire.rs`: the sink now keeps the newest picture (`Slot`) instead of taking it out on the first
+  buffer. `fill_next_buffer` runs `decide` on every process cycle with the gap read from the negotiated format. The
+  first frame, pushed before any reader exists, is no longer lost: a reader that links late gets it on its first free
+  buffer. A resize clears the held picture; a picture that arrives while another is being written stays new.
+- `capture::CaptureSource::next_frame(wait) -> Arrival::{Frame, Quiet}`; `Copier::frame_within` polls the Wayland
+  socket (`capture/wl/wait.rs`, `rustix` poll, the crate wayland-client polls with) and keeps the copy request open
+  across timeouts, so a change is never missed between calls. `Pump::turn` waits `QUIET_TURN` (250 ms) and reports
+  `PumpOutcome::Quiet`.
+- `Share::drop` no longer shuts the Wayland socket down; each share thread looks at its stop flag after every turn
+  (a quiet turn is at most 250 ms) and closes its own connection. This removes the `Io error: Broken pipe` lines the
+  log showed at the end of every share. `Canceller` stays in `capture` for other callers.
+
+**B. "target not found" (consumer `pipewiresrc path=<node>`): cause not established.**
+- Read, not run: the id returned is `pw_stream_get_node_id`, set in libpipewire's `proxy_bound_props` just before the
+  stream goes Paused, which is when transom reads it; so it is the node's global id. The consumer's `path=` becomes
+  `node.target=<id>` (PipeWire 1.6 `pw_stream_connect`), which WirePlumber 0.5 (`find-defined-target.lua`) looks up as
+  `node.id` among its session items; `target-object=` is looked up as `object.serial`. So a node id as `path` is
+  correct, and the id in the Start response stays the node id as the portal spec says. The "target not found" text
+  is WirePlumber's `prepare-link.lua`: no linkable item matched. The node is `Video/Source`, and WirePlumber makes an
+  item for `Video/*` nodes (`node/create-item.lua`) once its ports are known.
+- So either WirePlumber never made an item for the node (ports not announced, or not running with these scripts in the
+  jail) or the item failed `canLink`. Neither can be told from the evidence: no pipewire or wireplumber log was kept.
+  Not changed in transom: the properties differ from the other portals' (they set only `media.class` and connect with
+  driver and allocate-buffers flags) but none of that is read by the linking scripts.
+- To settle it: `dev/lib/chain.sh` now starts WirePlumber with `s-linking` and `s-node` at info level, and
+  `dev/lib/cast_check.sh::explain_node` (called by `screencast-output.sh` step 3 on failure) prints the node as the
+  graph has it (class, name, `object.serial`, state, port count), the WirePlumber lines naming the id, and whether
+  `target-object=<serial>` finds the node when `path=<id>` does not.
+
+**Steps 4 and 5 are not caused by 3.** The portal frontend's app-facing API carries the token as `restore_token`
+(`s`), in `SelectSources` options and in the `Start` results; `restore_data` `(suv)` exists only on the backend
+interface (see the installed `org.freedesktop.portal.ScreenCast.xml`). `portal_client.py cast` sent and read
+`restore_data`, so it could never see a token and never offered one back. Fixed in the client; transom's backend
+side (`restore_data` and `persist_mode` in its Start results) was already right.

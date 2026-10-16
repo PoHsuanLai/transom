@@ -76,3 +76,53 @@ frames_of() {
   command -v gst-launch-1.0 >/dev/null 2>&1 || { echo "need gst-launch-1.0 with pipewiresrc" >&2; return 3; }
   timeout 20 gst-launch-1.0 -v pipewiresrc path="$1" num-buffers="$2" ! fakesink 2>&1
 }
+
+# explain_node NODE: after a consumer could not find NODE, print what PipeWire and the session
+# manager know of it: the graph object (class, name, object.serial, ports), what WirePlumber
+# logged for the id, and whether the consumer finds the node by object serial
+# (`target-object=<serial>`) when `path=<id>` did not. Diagnosis only; it never changes a verdict.
+explain_node() {
+  local node=$1 dump serial code log
+  command -v pw-dump >/dev/null 2>&1 || { echo "need pw-dump to explain the node"; return 0; }
+  dump=$(pw-dump 2>&1) || true
+  read -r -d '' code <<'PY' || true
+import json, sys
+node = int(sys.argv[1])
+objects = json.load(sys.stdin)
+
+def props_of(o):
+    return (o.get("info") or {}).get("props") or {}
+
+found = [o for o in objects if o.get("id") == node]
+if not found:
+    print(f"no object {node} in the graph; video nodes there:")
+    for o in objects:
+        p = props_of(o)
+        if o.get("type", "").endswith("Node") and p.get("media.class", "").startswith("Video/"):
+            print(f"  id={o['id']} serial={p.get('object.serial')} name={p.get('node.name')}")
+    sys.exit(0)
+obj = found[0]
+p = props_of(obj)
+ports = [o for o in objects if o.get("type", "").endswith("Port") and props_of(o).get("node.id") == node]
+print(f"node {node}: class={p.get('media.class')} name={p.get('node.name')} "
+      f"serial={p.get('object.serial')} state={obj['info'].get('state')} "
+      f"ports={len(ports)} driver={p.get('node.driver')}")
+if len(sys.argv) > 2:
+    print(p.get("object.serial", ""), file=open(sys.argv[2], "w"))
+PY
+  serial=$(transom_state_dir)/node-serial
+  python3 -I -c "$code" "$node" "$serial" <<<"$dump" || true
+  serial=$(cat "$serial" 2>/dev/null || true)
+  log=$(transom_state_dir)/wireplumber.log
+  if [ -f "$log" ]; then
+    echo "wireplumber, lines naming node $node:"
+    grep -E "[^0-9]$node[^0-9]" "$log" | tail -n 10 | sed 's/^/  /' || true
+  fi
+  if [ -n "$serial" ] && command -v gst-launch-1.0 >/dev/null 2>&1; then
+    if timeout 10 gst-launch-1.0 pipewiresrc target-object="$serial" num-buffers=1 ! fakesink >/dev/null 2>&1; then
+      echo "target-object=$serial (the object serial) is found; path=$node is not"
+    else
+      echo "target-object=$serial (the object serial) is not found either"
+    fi
+  fi
+}

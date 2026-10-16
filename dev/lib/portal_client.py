@@ -125,7 +125,9 @@ def cast(types, persist, token):
     options = {"types": GLib.Variant("u", types), "persist_mode": GLib.Variant("u", persist),
                "cursor_mode": GLib.Variant("u", 2)}
     if token:
-        options["restore_data"] = GLib.Variant("(suv)", ("quire", 1, GLib.Variant("s", token)))
+        # The app-facing API takes the token as a string; the portal frontend swaps it for the
+        # backend's own restore data (a (suv)) and back.
+        options["restore_token"] = GLib.Variant("s", token)
     code, _ = request("SelectSources", "o", (session,), options)
     if code != 0:
         print(f"response={code} node= token= size=")
@@ -134,8 +136,7 @@ def cast(types, persist, token):
     streams = results.get("streams", [])
     node = streams[0][0] if streams else ""
     size = streams[0][1].get("size") if streams else None
-    kept = results.get("restore_data")
-    text = kept[2] if kept else ""
+    text = results.get("restore_token", "")
     print(f"response={code} node={node} token={text} "
           f"size={'x'.join(map(str, size)) if size else ''}", flush=True)
     sys.stdin.read()

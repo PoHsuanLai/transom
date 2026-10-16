@@ -1,10 +1,14 @@
 //! Capturing a whole display: `ext_output_image_capture_source_manager_v1` with
 //! `ext_image_copy_capture_manager_v1`.
 
+use std::time::Duration;
+
 use transom_core::CursorMode;
 
 use super::wl::{Copier, Link};
-use super::{Canceller, CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire};
+use super::{
+    Arrival, Canceller, CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire,
+};
 
 /// A running capture of one output.
 #[derive(Debug)]
@@ -37,6 +41,13 @@ impl OutputCapture {
 impl CaptureSource for OutputCapture {
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
         self.copier.frame()
+    }
+
+    fn next_frame(&mut self, wait: Duration) -> Result<Arrival, CaptureError> {
+        Ok(match self.copier.frame_within(wait)? {
+            Some(frame) => Arrival::Frame(frame),
+            None => Arrival::Quiet,
+        })
     }
 
     fn size(&self) -> PhysicalSizeWire {

@@ -24,6 +24,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # Named now so the fill lanes edit no manifest (P2-T1: image; P2-T2: the other three).
 wayland-client = { workspace = true }
+rustix = { workspace = true }
 wayland-protocols = { workspace = true }
 pipewire = { workspace = true }
 image = { workspace = true }

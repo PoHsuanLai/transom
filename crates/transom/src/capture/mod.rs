@@ -13,6 +13,7 @@ mod wl;
 use std::net::Shutdown;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use transom_core::{CastSource, CursorMode, OutputFacts};
 
@@ -110,11 +111,28 @@ pub enum CaptureError {
     Connection(String),
 }
 
+/// What a wait for the next frame came to.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Arrival {
+    /// A frame arrived.
+    Frame(CapturedFrame),
+    /// The wait ran out and the source is still there: nothing changed.
+    Quiet,
+}
+
 /// A source of frames.
 pub trait CaptureSource: Send + std::fmt::Debug {
     /// The next frame. Blocks until the source has something new (frames are damage-gated: a
     /// static picture yields none), and returns [`CaptureError::Ended`] once the source is gone.
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError>;
+    /// As [`CaptureSource::frame`], but gives up after `wait` with [`Arrival::Quiet`]. A request
+    /// for a frame stays open across calls, so no change is missed between them. A source that
+    /// never blocks has nothing to wait for and just serves its frame.
+    fn next_frame(&mut self, wait: Duration) -> Result<Arrival, CaptureError> {
+        let _ = wait;
+        self.frame().map(Arrival::Frame)
+    }
     /// The size the next frame will have.
     fn size(&self) -> PhysicalSizeWire;
     /// A handle that makes a [`CaptureSource::frame`] call that is blocked return an error, from
@@ -206,6 +224,13 @@ impl CaptureSource for ExtCapture {
         match &mut self.inner {
             ExtKind::Output(c) => c.frame(),
             ExtKind::Toplevel(c) => c.frame(),
+        }
+    }
+
+    fn next_frame(&mut self, wait: Duration) -> Result<Arrival, CaptureError> {
+        match &mut self.inner {
+            ExtKind::Output(c) => c.next_frame(wait),
+            ExtKind::Toplevel(c) => c.next_frame(wait),
         }
     }
 

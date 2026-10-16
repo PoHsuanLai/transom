@@ -10,7 +10,7 @@ use transom_core::{CastSource, CursorMode, PwNode};
 use super::PipewireSink;
 use super::options::StreamInfo;
 use super::stream::{FrameSink, Pump, PumpOutcome};
-use crate::capture::{Canceller, CaptureError, CaptureSource, DisplayName, ExtCapture};
+use crate::capture::{CaptureError, CaptureSource, DisplayName, ExtCapture};
 
 /// Why a share could not be opened.
 #[derive(Debug, thiserror::Error)]
@@ -38,7 +38,6 @@ const STOPPED_BY_US: u8 = 1;
 #[derive(Debug)]
 struct Running {
     info: StreamInfo,
-    canceller: Option<Canceller>,
     state: Arc<AtomicU8>,
     thread: Option<JoinHandle<()>>,
 }
@@ -91,11 +90,9 @@ impl Drop for Share {
     fn drop(&mut self) {
         for stream in &self.streams {
             stream.state.store(STOPPED_BY_US, Ordering::SeqCst);
-            if let Some(canceller) = &stream.canceller {
-                canceller.cancel();
-            }
         }
-        // The threads end on their own once cancelled; they are not waited for here.
+        // Each thread looks at its flag after every quiet turn (a quarter of a second at most)
+        // and ends by itself, closing its own connection; they are not waited for here.
         for stream in &mut self.streams {
             drop(stream.thread.take());
         }
@@ -110,7 +107,6 @@ fn open_one(
 ) -> Result<Running, OpenError> {
     let capture = ExtCapture::open_with(display, source, cursor)?;
     let size = capture.size();
-    let canceller = capture.canceller();
     let sink = PipewireSink::open(size, cursor)?;
     let info = StreamInfo {
         node: sink.node(),
@@ -124,7 +120,11 @@ fn open_one(
         .spawn({
             let state = Arc::clone(&state);
             move || {
-                while let Ok(PumpOutcome::Pushed | PumpOutcome::ResizedAndPushed) = pump.turn() {}
+                while state.load(Ordering::SeqCst) == RUNNING
+                    && let Ok(
+                        PumpOutcome::Pushed | PumpOutcome::ResizedAndPushed | PumpOutcome::Quiet,
+                    ) = pump.turn()
+                {}
                 drop(pump);
                 if state.load(Ordering::SeqCst) == RUNNING {
                     ended();
@@ -133,7 +133,6 @@ fn open_one(
         })?;
     Ok(Running {
         info,
-        canceller,
         state,
         thread: Some(thread),
     })

@@ -3,6 +3,7 @@
 mod choice;
 mod inhibit;
 mod layout;
+mod pacing;
 mod restore;
 mod screencast;
 mod settings;

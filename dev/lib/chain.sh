@@ -79,7 +79,9 @@ start_chain() {
   export XDG_CURRENT_DESKTOP=quire XDG_DESKTOP_PORTAL_DIR="$state/portals"
 
   "$pw" >"$state/pipewire.log" 2>&1 & echo "TRANSOM_PIPEWIRE_PID=$!" >> "$state/env"
-  "$wp" >"$state/wireplumber.log" 2>&1 & echo "TRANSOM_WIREPLUMBER_PID=$!" >> "$state/env"
+  # The linking and node topics at info level: the log then says which node got a session item and
+  # why a consumer's target was or was not found (a screencast check reads it).
+  WIREPLUMBER_DEBUG=2,s-linking:4,s-node:4 "$wp" >"$state/wireplumber.log" 2>&1 & echo "TRANSOM_WIREPLUMBER_PID=$!" >> "$state/env"
   "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
   # The frontend records the person's answers (Access, screen sharing) in the permission store and
   # gives up on the request when it cannot reach one; the private bus has no activation for it.

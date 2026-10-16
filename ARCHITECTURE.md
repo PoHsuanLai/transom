@@ -9,7 +9,7 @@ backend (see `dist/quire-portals.conf`).
 
 | Crate | Purpose | I/O |
 | --- | --- | --- |
-| `transom-core` | the screen-cast session machine (`step`), restore tokens and book, the source choice, the inhibit book, the layout of a picture of all outputs, the settings values and their wire numbers | none |
+| `transom-core` | the screen-cast session machine (`step`), restore tokens and book, the source choice, the inhibit book, the layout of a picture of all outputs, when a held picture is sent again (`pacing`), the settings values and their wire numbers | none |
 | `transom` | the six D-Bus interfaces (zbus), the seams and their real and fake implementations, `serve`, the binary | D-Bus, Wayland, PipeWire, files |
 
 `transom-core` depends on `thiserror` only. It reaches no zbus, tokio, pipewire, wayland, image
@@ -22,11 +22,11 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 ## 2. Layout
 
 ```
-crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, settings_values}.rs
+crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, pacing, settings_values}.rs
 crates/transom/src/{lib, main, error, chooser, screenshot, remote_desktop, settings, inhibit, access}.rs
                    screenshot/{layout, color}.rs
                    screencast/{mod, session, stream, pipewire, restore}.rs
-                   capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/outputs.rs
+                   capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/{outputs, wait}.rs
 dist/   quire.portal  quire-portals.conf  org.freedesktop.impl.portal.desktop.quire.service  transom.service
 scripts/install.sh   installs the binary, the unit, the D-Bus file and the portal file (standalone; --prefix, --destdir, --bin-dir)
 dev/    up.sh down.sh lib/{jail,chain}.sh accept/*.sh        (the jailed portal chain)
@@ -49,7 +49,9 @@ scripts/check-boundary.sh
 | `remote_desktop::EisHandout` | `CasementEis` (`org.quire.Compositor1.ConnectEis`) | `FakeEis` | P2-T3 |
 
 `Pump` (`screencast/stream.rs`) is the loop body between a `CaptureSource` and a `FrameSink`, and
-is implemented and tested against the fakes.
+is implemented and tested against the fakes. A turn waits at most `QUIET_TURN` for a frame and reports
+`Quiet` if the picture did not change; the sink, not the pump, keeps the newest picture and sends it
+again at the stream's negotiated pace (`transom_core::decide`), so a still screen still gives a stream.
 
 ## 4. Flow of a screen share
 

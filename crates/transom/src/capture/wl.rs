@@ -6,6 +6,7 @@
 //! asked for: the constraint events that offer them are ignored.
 
 mod outputs;
+mod wait;
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -14,8 +15,10 @@ use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use transom_core::{CastSource, CursorMode};
+use wayland_client::backend::WaylandError;
 use wayland_client::globals::{BindError, GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
@@ -35,9 +38,14 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 };
 
 use self::outputs::SeenOutput;
+use self::wait::{Readiness, Waited, readable_within};
 use super::{
     Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat,
 };
+
+/// How long a frame request is waited on in one go when the caller will wait for as long as it
+/// takes.
+const PATIENCE: Duration = Duration::from_secs(3600);
 
 /// How many times a frame that fails for a reason that may pass is asked for again.
 const FRAME_ATTEMPTS: u32 = 3;
@@ -153,6 +161,40 @@ impl Link {
             self.queue.blocking_dispatch(&mut self.wl).map_err(broken)?;
         }
         Ok(())
+    }
+
+    /// As [`Link::wait`], but gives up once `wait` has passed. Events that arrive are dispatched
+    /// either way, so a later call carries on from where this one stopped.
+    fn wait_within(
+        &mut self,
+        done: impl Fn(&Wl) -> bool,
+        wait: Duration,
+    ) -> Result<Waited, CaptureError> {
+        let deadline = Instant::now() + wait;
+        loop {
+            self.queue.dispatch_pending(&mut self.wl).map_err(broken)?;
+            self.conn.flush().map_err(broken)?;
+            if done(&self.wl) {
+                return Ok(Waited::Done);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(Waited::TimedOut);
+            }
+            // Events already queued for us mean there is nothing to read yet: dispatch them.
+            let Some(guard) = self.queue.prepare_read() else {
+                continue;
+            };
+            match readable_within(guard.connection_fd(), left)? {
+                Readiness::Silent => drop(guard),
+                Readiness::Ready => match guard.read() {
+                    Ok(_) => {}
+                    Err(WaylandError::Io(error))
+                        if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => return Err(broken(error)),
+                },
+            }
+        }
     }
 
     /// The output called `name`, once the compositor has told us the names.
@@ -295,6 +337,10 @@ pub(super) struct Copier {
     buffer: Option<ShmBuffer>,
     generation: u32,
     size: PhysicalSizeWire,
+    /// The frame asked for and not yet answered. It stays open while the picture is still.
+    inflight: Option<ExtImageCopyCaptureFrameV1>,
+    /// How many answers in a row said to try again.
+    retries: u32,
 }
 
 impl Copier {
@@ -329,6 +375,8 @@ impl Copier {
                 width: 0,
                 height: 0,
             },
+            inflight: None,
+            retries: 0,
         };
         copier.link.wait(|wl| wl.generation > 0 || wl.stopped)?;
         copier.adopt_constraints()?;
@@ -402,36 +450,66 @@ impl Copier {
         })
     }
 
-    /// Ask for the next frame and wait for it. A window that has not changed sends none, so this
-    /// blocks until the picture changes.
+    /// Ask for the next frame and wait for it. A picture that has not changed sends none, so this
+    /// blocks until it changes.
     pub fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        for _ in 0..FRAME_ATTEMPTS {
-            self.adopt_constraints()?;
-            let Some(shm) = self.buffer.as_ref() else {
-                return Err(CaptureError::Unsupported);
+        loop {
+            if let Some(frame) = self.frame_within(PATIENCE)? {
+                return Ok(frame);
+            }
+        }
+    }
+
+    /// As [`Copier::frame`], but `None` once `wait` has passed with the picture unchanged. The
+    /// request stays open for the next call, so a change is never missed between calls.
+    pub fn frame_within(&mut self, wait: Duration) -> Result<Option<CapturedFrame>, CaptureError> {
+        let deadline = Instant::now() + wait;
+        while self.retries < FRAME_ATTEMPTS {
+            let frame = match self.inflight.take() {
+                Some(frame) => frame,
+                None => self.request()?,
             };
-            let frame = self.session.create_frame(&self.link.qh, ());
-            self.link.wl.frame = FrameState::default();
-            frame.attach_buffer(&shm.buffer);
-            frame.damage_buffer(
-                0,
-                0,
-                i32::try_from(shm.width).unwrap_or(i32::MAX),
-                i32::try_from(shm.height).unwrap_or(i32::MAX),
-            );
-            frame.capture();
-            self.link
-                .wait(|wl| wl.frame.outcome.is_some() || wl.stopped)?;
+            let left = deadline.saturating_duration_since(Instant::now());
+            let answered = self
+                .link
+                .wait_within(|wl| wl.frame.outcome.is_some() || wl.stopped, left)?;
+            if answered == Waited::TimedOut {
+                self.inflight = Some(frame);
+                return Ok(None);
+            }
             frame.destroy();
             match self.link.wl.frame.outcome.take() {
                 None => return Err(CaptureError::Ended),
-                Some(Outcome::Ready) => return self.read_frame(),
+                Some(Outcome::Ready) => {
+                    self.retries = 0;
+                    return self.read_frame().map(Some);
+                }
                 Some(Outcome::Stopped) => return Err(CaptureError::Stopped),
-                // New constraints arrive with or before this; the next turn adopts them.
-                Some(Outcome::Constraints | Outcome::Unknown) => {}
+                // New constraints arrive with or before this; the next request adopts them.
+                Some(Outcome::Constraints | Outcome::Unknown) => self.retries += 1,
             }
         }
+        self.retries = 0;
         Err(CaptureError::Stopped)
+    }
+
+    /// Ask the compositor for a frame into the current buffer.
+    fn request(&mut self) -> Result<ExtImageCopyCaptureFrameV1, CaptureError> {
+        self.adopt_constraints()?;
+        let Some(shm) = self.buffer.as_ref() else {
+            return Err(CaptureError::Unsupported);
+        };
+        let frame = self.session.create_frame(&self.link.qh, ());
+        self.link.wl.frame = FrameState::default();
+        frame.attach_buffer(&shm.buffer);
+        frame.damage_buffer(
+            0,
+            0,
+            i32::try_from(shm.width).unwrap_or(i32::MAX),
+            i32::try_from(shm.height).unwrap_or(i32::MAX),
+        );
+        frame.capture();
+        Ok(frame)
     }
 
     fn read_frame(&self) -> Result<CapturedFrame, CaptureError> {
@@ -457,6 +535,9 @@ impl Copier {
 
 impl Drop for Copier {
     fn drop(&mut self) {
+        if let Some(frame) = self.inflight.take() {
+            frame.destroy();
+        }
         self.session.destroy();
         let _ = self.link.conn.flush();
     }

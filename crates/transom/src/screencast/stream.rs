@@ -4,9 +4,15 @@
 //! [`FakeSink`] records what it was given. [`Pump`] is the whole loop body, so the logic between
 //! them is tested without either.
 
+use std::time::Duration;
+
 use transom_core::{CursorMode, PwNode};
 
-use crate::capture::{CaptureError, CaptureSource, CapturedFrame, PhysicalSizeWire};
+use crate::capture::{Arrival, CaptureError, CaptureSource, CapturedFrame, PhysicalSizeWire};
+
+/// How long one turn waits for a change before it gives the loop a chance to look around (to
+/// notice it was told to stop).
+pub const QUIET_TURN: Duration = Duration::from_millis(250);
 
 /// Why a frame could not be handed on.
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +30,8 @@ pub enum SinkError {
 pub trait FrameSink: Send + std::fmt::Debug {
     /// The node apps connect to.
     fn node(&self) -> PwNode;
-    /// Offer one frame. A sink with no free buffer drops the frame and returns `Ok`.
+    /// Offer one frame. The sink keeps it as the picture to show: it goes out when a reader has a
+    /// buffer free, and again at the stream's pace for as long as nothing newer comes.
     fn push(&mut self, frame: CapturedFrame) -> Result<(), SinkError>;
     /// Tell the sink the stream's size changed (the window was resized).
     fn resize(&mut self, size: PhysicalSizeWire) -> Result<(), SinkError>;
@@ -38,6 +45,8 @@ pub enum PumpOutcome {
     Pushed,
     /// The sink had to be resized first, then a frame went.
     ResizedAndPushed,
+    /// Nothing changed for a while. The sink keeps sending the last picture on its own.
+    Quiet,
     /// The source is gone; the stream is over.
     SourceEnded,
 }
@@ -78,10 +87,12 @@ impl<C: CaptureSource, S: FrameSink> Pump<C, S> {
         self.sink
     }
 
-    /// One turn: block for a frame, resize the sink if the frame's size changed, push it.
+    /// One turn: wait up to [`QUIET_TURN`] for a frame, resize the sink if the frame's size
+    /// changed, push it.
     pub fn turn(&mut self) -> Result<PumpOutcome, SinkError> {
-        let frame = match self.source.frame() {
-            Ok(frame) => frame,
+        let frame = match self.source.next_frame(QUIET_TURN) {
+            Ok(Arrival::Frame(frame)) => frame,
+            Ok(Arrival::Quiet) => return Ok(PumpOutcome::Quiet),
             Err(CaptureError::Ended | CaptureError::Stopped) => {
                 return Ok(PumpOutcome::SourceEnded);
             }

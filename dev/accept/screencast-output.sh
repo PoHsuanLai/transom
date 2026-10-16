@@ -46,6 +46,7 @@ else
   step FAIL "3 no frames reached the consumer"; status=1
   # What the consumer said, so a failure names its cause.
   tail -n 15 <<<"$caps" | sed 's/^/  consumer: /'
+  explain_node "$node" | sed 's/^/  graph: /'
 fi
 
 token=$(cast_field token)

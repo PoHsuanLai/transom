@@ -1,22 +1,33 @@
-//! A capture source for tests: serves frames it was given, then ends.
+//! A capture source for tests: serves frames it was given, with quiet spells where it was told
+//! to, then ends.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
-use super::{CaptureError, CaptureSource, CapturedFrame, FrameData, PhysicalSizeWire, PixelFormat};
+use super::{
+    Arrival, CaptureError, CaptureSource, CapturedFrame, FrameData, PhysicalSizeWire, PixelFormat,
+};
 
-/// Serves a fixed run of frames, then [`CaptureError::Ended`].
+/// Serves a fixed run of frames, then [`CaptureError::Ended`]. A `None` in the run is a spell in
+/// which the picture did not change: [`CaptureSource::next_frame`] answers [`Arrival::Quiet`] once
+/// for it, and [`CaptureSource::frame`] (which waits for a change) steps over it.
 #[derive(Debug)]
 pub struct FakeCapture {
     size: PhysicalSizeWire,
-    frames: VecDeque<CapturedFrame>,
+    frames: VecDeque<Option<CapturedFrame>>,
 }
 
 impl FakeCapture {
     /// A source that will serve exactly these frames, in order.
     pub fn new(size: PhysicalSizeWire, frames: Vec<CapturedFrame>) -> Self {
+        Self::scripted(size, frames.into_iter().map(Some).collect())
+    }
+
+    /// A source that serves this run: a frame for each `Some`, a quiet spell for each `None`.
+    pub fn scripted(size: PhysicalSizeWire, run: Vec<Option<CapturedFrame>>) -> Self {
         Self {
             size,
-            frames: frames.into(),
+            frames: run.into(),
         }
     }
 
@@ -40,13 +51,28 @@ impl FakeCapture {
 
     /// How many frames are still to come.
     pub fn remaining(&self) -> usize {
-        self.frames.len()
+        self.frames.iter().flatten().count()
     }
 }
 
 impl CaptureSource for FakeCapture {
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        self.frames.pop_front().ok_or(CaptureError::Ended)
+        loop {
+            match self.frames.pop_front() {
+                Some(Some(frame)) => return Ok(frame),
+                Some(None) => {}
+                None => return Err(CaptureError::Ended),
+            }
+        }
+    }
+
+    fn next_frame(&mut self, wait: Duration) -> Result<Arrival, CaptureError> {
+        let _ = wait;
+        match self.frames.pop_front() {
+            Some(Some(frame)) => Ok(Arrival::Frame(frame)),
+            Some(None) => Ok(Arrival::Quiet),
+            None => Err(CaptureError::Ended),
+        }
     }
 
     fn size(&self) -> PhysicalSizeWire {

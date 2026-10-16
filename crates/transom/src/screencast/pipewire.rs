@@ -8,14 +8,17 @@
 //! frame that arrives as one is refused.
 //!
 //! The node is not linked to anything: the app that asked for the share reads it by node id. The
-//! stream only has a buffer to fill when an app reads it, and a frame is written only when one is
-//! waiting, so a picture that does not change sends nothing.
+//! stream only has a buffer to fill when an app reads it. The sink keeps the newest picture: a
+//! picture that has not gone out is written to the first free buffer (so an app that links after
+//! the first frame still gets it), and a picture that has gone out is written again once the
+//! negotiated frame gap has passed (so a still screen still gives a stream). When to write is
+//! `transom_core::decide`.
 
 use std::io::Cursor;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ::pipewire as pw;
 use pw::properties::properties;
@@ -26,7 +29,7 @@ use pw::spa::pod::serialize::PodSerializer;
 use pw::spa::pod::{ChoiceValue, Object, Pod, Property, Value};
 use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Direction, Fraction, Rectangle, SpaTypes};
 use pw::stream::{StreamFlags, StreamRc, StreamState};
-use transom_core::{CursorMode, PwNode};
+use transom_core::{CursorMode, FrameRate, Held, PwNode, Step, decide};
 
 use super::pixels::{self, Layout};
 use super::stream::{FrameSink, SinkError};
@@ -35,10 +38,32 @@ use crate::capture::{CapturedFrame, FrameData, PhysicalSizeWire, PixelFormat};
 /// How long `open` waits for PipeWire to give the stream a node.
 const READY_WITHIN: Duration = Duration::from_secs(5);
 
-/// The newest frame that has not been sent yet. A newer one replaces it.
-type Waiting = Arc<Mutex<Option<Pending>>>;
+/// The newest picture and when it last went out. A newer picture replaces it.
+type Latest = Arc<Mutex<Slot>>;
 
-/// A frame waiting for the next free buffer.
+/// The picture the stream shows, and whether it has been written to a buffer.
+#[derive(Debug, Default)]
+struct Slot {
+    picture: Option<Arc<Pending>>,
+    /// When the picture was last written to a buffer; `None` while it has not been.
+    sent_at: Option<Instant>,
+}
+
+impl Slot {
+    /// How the picture stands as of `now`.
+    fn held(&self, now: Instant) -> Held {
+        match (&self.picture, self.sent_at) {
+            (None, _) => Held::Nothing,
+            (Some(_), None) => Held::Unsent,
+            (Some(_), Some(at)) => Held::Sent {
+                ago_ns: u64::try_from(now.saturating_duration_since(at).as_nanos())
+                    .unwrap_or(u64::MAX),
+            },
+        }
+    }
+}
+
+/// A picture of the screen, as the capture produced it.
 #[derive(Debug)]
 struct Pending {
     size: PhysicalSizeWire,
@@ -59,7 +84,7 @@ enum Command {
 pub struct PipewireSink {
     node: PwNode,
     cursor: CursorMode,
-    waiting: Waiting,
+    latest: Latest,
     commands: pw::channel::Sender<Command>,
     thread: Option<JoinHandle<()>>,
 }
@@ -78,18 +103,18 @@ impl PipewireSink {
     pub fn open(size: PhysicalSizeWire, cursor: CursorMode) -> Result<Self, SinkError> {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (commands, inbox) = pw::channel::channel::<Command>();
-        let waiting = Waiting::default();
+        let latest = Latest::default();
         let thread = std::thread::Builder::new()
             .name("transom-pipewire".to_owned())
             .spawn({
-                let waiting = Arc::clone(&waiting);
-                move || run(size, &ready_tx, inbox, waiting)
+                let latest = Arc::clone(&latest);
+                move || run(size, &ready_tx, inbox, latest)
             })
             .map_err(|error| SinkError::Pipewire(error.to_string()))?;
         let mut sink = Self {
             node: PwNode(0),
             cursor,
-            waiting,
+            latest,
             commands,
             thread: Some(thread),
         };
@@ -146,16 +171,19 @@ impl FrameSink for PipewireSink {
             bytes,
         };
         let mut slot = self
-            .waiting
+            .latest
             .lock()
             .map_err(|_| SinkError::Pipewire("the frame slot was poisoned".to_owned()))?;
-        *slot = Some(pending);
+        *slot = Slot {
+            picture: Some(Arc::new(pending)),
+            sent_at: None,
+        };
         Ok(())
     }
 
     fn resize(&mut self, size: PhysicalSizeWire) -> Result<(), SinkError> {
-        if let Ok(mut slot) = self.waiting.lock() {
-            *slot = None;
+        if let Ok(mut slot) = self.latest.lock() {
+            *slot = Slot::default();
         }
         self.commands
             .send(Command::Resize(size))
@@ -165,8 +193,10 @@ impl FrameSink for PipewireSink {
 
 /// What the stream's callbacks share.
 struct Negotiated {
-    waiting: Waiting,
+    latest: Latest,
     format: VideoInfoRaw,
+    /// The rate the reader settled on, which sets the gap between repeats of a still picture.
+    pace: transom_core::Negotiated,
     ready: Option<mpsc::Sender<Result<u32, String>>>,
 }
 
@@ -175,9 +205,9 @@ fn run(
     size: PhysicalSizeWire,
     ready: &mpsc::Sender<Result<u32, String>>,
     inbox: pw::channel::Receiver<Command>,
-    waiting: Waiting,
+    latest: Latest,
 ) {
-    if let Err(message) = serve(size, ready, inbox, waiting) {
+    if let Err(message) = serve(size, ready, inbox, latest) {
         let _ = ready.send(Err(message));
     }
 }
@@ -186,7 +216,7 @@ fn serve(
     size: PhysicalSizeWire,
     ready: &mpsc::Sender<Result<u32, String>>,
     inbox: pw::channel::Receiver<Command>,
-    waiting: Waiting,
+    latest: Latest,
 ) -> Result<(), String> {
     let failed = |error: pw::Error| error.to_string();
     pw::init();
@@ -208,8 +238,9 @@ fn serve(
     .map_err(failed)?;
 
     let state = Negotiated {
-        waiting,
+        latest,
         format: VideoInfoRaw::new(),
+        pace: transom_core::Negotiated::Open { ceiling: None },
         ready: Some(ready.clone()),
     };
     let _listener = stream
@@ -235,6 +266,10 @@ fn serve(
             if state.format.parse(param).is_err() {
                 return;
             }
+            state.pace = transom_core::Negotiated::from_wire(
+                frame_rate(state.format.framerate()),
+                frame_rate(state.format.max_framerate()),
+            );
             let Ok(bytes) = buffers_pod(state.format.size()) else {
                 return;
             };
@@ -276,12 +311,22 @@ fn serve(
     Ok(())
 }
 
-/// The process step: if a frame is waiting and a buffer is free, write the frame into it.
+/// The process step: if the picture is due (new, or old enough to repeat) and a buffer is free,
+/// write it into the buffer.
 ///
-/// With nothing waiting no buffer is taken, so nothing is sent for that cycle. A frame that
-/// arrives while no buffer is free is dropped, as the sink's contract says.
+/// A picture that is not due takes no buffer, so nothing is sent for that cycle. A picture that
+/// is due but finds no free buffer stays due and is tried again next cycle. The picture stays
+/// held after it is written: a still screen is sent again, a newer picture replaces it.
 fn fill_next_buffer(stream: &pw::stream::Stream, state: &mut Negotiated) {
-    let Some(frame) = state.waiting.lock().ok().and_then(|mut slot| slot.take()) else {
+    let now = Instant::now();
+    let (picture, step) = {
+        let Ok(slot) = state.latest.lock() else {
+            return;
+        };
+        let step = decide(slot.held(now), state.pace.repeat_gap_ns());
+        (slot.picture.clone(), step)
+    };
+    let (Some(frame), Step::SendNew | Step::SendAgain) = (picture, step) else {
         return;
     };
     let size = state.format.size();
@@ -318,6 +363,23 @@ fn fill_next_buffer(stream: &pw::stream::Stream, state: &mut Negotiated) {
     *chunk.offset_mut() = 0;
     *chunk.stride_mut() = i32::try_from(stride).unwrap_or(0);
     *chunk.size_mut() = u32::try_from(stride * rows).unwrap_or(0);
+    // Mark it sent only if it is still the picture shown: a newer one arrived meanwhile stays new.
+    if let Ok(mut slot) = state.latest.lock()
+        && slot
+            .picture
+            .as_ref()
+            .is_some_and(|p| Arc::ptr_eq(p, &frame))
+    {
+        slot.sent_at = Some(now);
+    }
+}
+
+/// A SPA fraction as the pure pacing logic reads it.
+fn frame_rate(fraction: Fraction) -> FrameRate {
+    FrameRate {
+        num: fraction.num,
+        denom: fraction.denom,
+    }
 }
 
 /// The capture layout a negotiated SPA format stands for.
