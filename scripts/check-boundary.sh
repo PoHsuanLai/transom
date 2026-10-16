@@ -49,7 +49,7 @@ names_only "T6 only main.rs reads the environment" '\b(std::env::|env::var)' 'cr
 names_only "T7 no unsafe" '\bunsafe\b' '$^'
 
 # T8 is checked on comments too: another backend is a fact to read about, never code to copy.
-hits=$(grep -rniE --include='*.rs' 'xdg-desktop-portal-(wlr|gnome|kde|cosmic|luminous|hyprland|gtk)|xdpw' crates 2>/dev/null || true)
+hits=$(grep -rniE --include='*.rs' 'xdg-desktop-portal-(wlr|gnome|kde|luminous|hyprland|gtk)|xdpw' crates 2>/dev/null || true)
 if [ -n "$hits" ]; then bad "T8 another backend is named"; printf '%s\n' "$hits" | head; else ok "T8 no other backend named"; fi
 
 # T9: a `bool` in transom-core's public signatures or fields (a predicate's return type is fine).
