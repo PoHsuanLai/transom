@@ -185,6 +185,17 @@ impl Asker for ShellAsker {
     }
 }
 
+/// An asker with nobody behind it: every question is unanswerable, which reads as a no. What a
+/// service nobody gave a shell to does.
+#[derive(Debug, Default)]
+pub struct NoAsker;
+
+impl Asker for NoAsker {
+    fn ask<'a>(&'a self, _: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
+        Box::pin(async { Err(ChooserError::Unavailable) })
+    }
+}
+
 /// An asker that answers from a script, for tests: each call takes the next answer; when the
 /// script is empty the person denies.
 #[derive(Debug, Default)]

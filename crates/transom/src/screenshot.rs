@@ -9,26 +9,21 @@
 
 mod color;
 mod layout;
+mod service;
 
 pub use color::{ColorPicker, FakeColorPicker, NoColorPicker, ShellColorPicker, color_from_wire};
 pub use layout::{FixedLayout, LiveLayout, OutputLayout, OutputPlacement};
+pub use service::ScreenshotService;
 
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use transom_core::{Rgb, SettingValue};
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
-
+use crate::access::{Asker, NoAsker};
 use crate::capture::{
     CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData,
     PhysicalSizeWire, PixelFormat,
 };
-use crate::chooser::ChooserError;
 use crate::names::AppNames;
-use crate::screencast::Dict;
-use crate::settings::wire_value;
 
 /// Why a screenshot could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -189,6 +184,7 @@ pub struct ScreenshotSetup {
     pictures: PathBuf,
     stamp: String,
     picker: Box<dyn ColorPicker>,
+    asker: Box<dyn Asker>,
     names: AppNames,
 }
 
@@ -201,8 +197,16 @@ impl ScreenshotSetup {
             pictures,
             stamp,
             picker: Box::new(NoColorPicker),
+            asker: Box::new(NoAsker),
             names: AppNames::none(),
         }
+    }
+
+    /// This setup asking `asker` before it takes a picture nobody else has asked about (without
+    /// one, such a request is refused).
+    pub fn with_asker(mut self, asker: Box<dyn Asker>) -> Self {
+        self.asker = asker;
+        self
     }
 
     /// This setup showing apps by the names `names` finds.
@@ -383,134 +387,4 @@ pub fn take(setup: &ScreenshotSetup, seq: u32) -> Result<PathBuf, ShotError> {
         }
     }
     Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists).into())
-}
-
-fn owned(value: impl Into<Value<'static>>) -> Option<OwnedValue> {
-    OwnedValue::try_from(value.into()).ok()
-}
-
-/// A colour as the portal's `color` result carries it: `(ddd)`.
-fn wire_color(color: Rgb) -> Option<OwnedValue> {
-    wire_value(SettingValue::Rgb(color)).and_then(|v| OwnedValue::try_from(v).ok())
-}
-
-/// The served interface.
-#[derive(Debug)]
-pub struct ScreenshotService {
-    setup: Arc<ScreenshotSetup>,
-    seq: AtomicU32,
-}
-
-impl Default for ScreenshotService {
-    fn default() -> Self {
-        Self::with_setup(ScreenshotSetup::unconfigured())
-    }
-}
-
-impl ScreenshotService {
-    /// A service with no screens: every screenshot is answered as failed.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A service taking screenshots as `setup` says.
-    pub fn with_setup(setup: ScreenshotSetup) -> Self {
-        Self {
-            setup: Arc::new(setup),
-            seq: AtomicU32::new(0),
-        }
-    }
-}
-
-/// The portal's response codes.
-const RESPONSE_OK: u32 = 0;
-const RESPONSE_CANCELLED: u32 = 1;
-const RESPONSE_FAILED: u32 = 2;
-
-#[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
-impl ScreenshotService {
-    /// Take a screenshot of every screen, laid out as the screens sit; the reply's `uri` names the
-    /// PNG written to the person's pictures. The `interactive`, `modal` and `target` hints are
-    /// not used: nothing is asked, and the whole screen is what `AvailableTargets` offers.
-    async fn screenshot(
-        &self,
-        handle: ObjectPath<'_>,
-        app_id: &str,
-        parent_window: &str,
-        options: Dict,
-    ) -> (u32, Dict) {
-        let _ = (handle, app_id, parent_window, options);
-        let setup = Arc::clone(&self.setup);
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let made = tokio::task::spawn_blocking(move || {
-            let path = take(&setup, seq)?;
-            file_uri(&path)
-        })
-        .await;
-        match made {
-            Ok(Ok(uri)) => {
-                let mut results = Dict::new();
-                if let Some(v) = owned(uri) {
-                    results.insert("uri".to_owned(), v);
-                }
-                (RESPONSE_OK, results)
-            }
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "a screenshot failed");
-                (RESPONSE_FAILED, Dict::new())
-            }
-            Err(error) => {
-                tracing::warn!(%error, "the screenshot task did not finish");
-                (RESPONSE_FAILED, Dict::new())
-            }
-        }
-    }
-
-    /// Let the person pick a colour from the screen; the reply's `color` is `(ddd)`. The shell
-    /// shows the picker. With no shell to ask, or a cancel, the reply is cancelled.
-    async fn pick_color(
-        &self,
-        handle: ObjectPath<'_>,
-        app_id: &str,
-        parent_window: &str,
-        options: Dict,
-    ) -> (u32, Dict) {
-        let _ = (handle, parent_window, options);
-        match self
-            .setup
-            .picker
-            .pick(&self.setup.names.label(app_id))
-            .await
-        {
-            Ok(Some(color)) => match wire_color(color) {
-                Some(value) => {
-                    let mut results = Dict::new();
-                    results.insert("color".to_owned(), value);
-                    (RESPONSE_OK, results)
-                }
-                None => (RESPONSE_FAILED, Dict::new()),
-            },
-            Ok(None) => (RESPONSE_CANCELLED, Dict::new()),
-            Err(ChooserError::Unavailable) => {
-                tracing::warn!("no colour picker is available");
-                (RESPONSE_CANCELLED, Dict::new())
-            }
-            Err(error) => {
-                tracing::warn!(%error, "the colour picker failed");
-                (RESPONSE_FAILED, Dict::new())
-            }
-        }
-    }
-
-    /// The screenshot targets offered: the whole screen.
-    #[zbus(property)]
-    fn available_targets(&self) -> u32 {
-        1
-    }
-
-    /// The interface version.
-    #[zbus(property, name = "version")]
-    fn version(&self) -> u32 {
-        3
-    }
 }

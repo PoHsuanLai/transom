@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use transom::access::ShellAsker;
 use transom::capture::DisplayName;
 use transom::link::BusLink;
 use transom::names::AppNames;
@@ -119,5 +120,6 @@ fn screenshots(link: BusLink) -> ScreenshotSetup {
         pictures,
         stamp,
     )
-    .with_picker(Box::new(ShellColorPicker::new(link)))
+    .with_picker(Box::new(ShellColorPicker::new(link.clone())))
+    .with_asker(Box::new(ShellAsker::new(link)))
 }
