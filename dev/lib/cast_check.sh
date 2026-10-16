@@ -74,7 +74,11 @@ cast_field() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" "$CAST_OUT" | head -n 1; }
 # negotiated caps lines. Exit 3 when no consumer is installed.
 frames_of() {
   command -v gst-launch-1.0 >/dev/null 2>&1 || { echo "need gst-launch-1.0 with pipewiresrc" >&2; return 3; }
-  timeout 20 gst-launch-1.0 -v pipewiresrc path="$1" num-buffers="$2" ! fakesink 2>&1
+  # The consumer says it takes video, as a screen recorder does: WirePlumber links only nodes of
+  # one media type, and a bare pipewiresrc is "Stream/Input/Unknown", so it never finds the share;
+  # the caps filter gives PipeWire formats to offer (ANY caps offer none, and the link fails).
+  timeout 20 gst-launch-1.0 -v pipewiresrc path="$1" num-buffers="$2" \
+    stream-properties="props,media.type=Video,media.category=Capture,media.role=Screen" ! video/x-raw ! fakesink 2>&1
 }
 
 # explain_node NODE: after a consumer could not find NODE, print what PipeWire and the session
@@ -119,7 +123,8 @@ PY
     grep -E "[^0-9]$node[^0-9]" "$log" | tail -n 10 | sed 's/^/  /' || true
   fi
   if [ -n "$serial" ] && command -v gst-launch-1.0 >/dev/null 2>&1; then
-    if timeout 10 gst-launch-1.0 pipewiresrc target-object="$serial" num-buffers=1 ! fakesink >/dev/null 2>&1; then
+    if timeout 10 gst-launch-1.0 pipewiresrc target-object="$serial" num-buffers=1 \
+        stream-properties="props,media.type=Video,media.category=Capture,media.role=Screen" ! video/x-raw ! fakesink >/dev/null 2>&1; then
       echo "target-object=$serial (the object serial) is found; path=$node is not"
     else
       echo "target-object=$serial (the object serial) is not found either"
