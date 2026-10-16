@@ -10,7 +10,8 @@
       Runs until killed.
 
   portal_client.py cast TYPES PERSIST [RESTORE_TOKEN]
-      Run ScreenCast CreateSession, SelectSources and Start through the portal frontend. TYPES is
+      Register as the app org.quire.CastCheck, then run ScreenCast CreateSession, SelectSources and
+      Start through the portal frontend (a share is remembered only for an app with an id). TYPES is
       the portal bit set (1 display, 2 window), PERSIST the persist mode. Prints one line:
       `response=N node=ID token=TOKEN size=WxH`; the node and token are empty when absent.
       The session stays open until the process is killed or stdin closes.
@@ -89,8 +90,22 @@ def fake_shell(log_path, answers):
     GLib.MainLoop().run()
 
 
+# The app id the cast check registers as. A restore grant is kept only for an app with an
+# identity (PORTAL-16), and a host app has one only once it registers it with the portal.
+CAST_APP_ID = "org.quire.CastCheck"
+
+
+def register(conn, app_id):
+    """Name this connection's app to the portal frontend, as a host app (GTK, Qt) does before any
+    other portal call: org.freedesktop.host.portal.Registry.Register (xdg-desktop-portal 1.19)."""
+    conn.call_sync(PORTAL, PORTAL_PATH, "org.freedesktop.host.portal.Registry", "Register",
+                   GLib.Variant("(sa{sv})", (app_id, {})), None, Gio.DBusCallFlags.NONE, 10000,
+                   None)
+
+
 def cast(types, persist, token):
     conn = Gio.bus_get_sync(Gio.BusType.SESSION)
+    register(conn, CAST_APP_ID)
     sender = conn.get_unique_name()[1:].replace(".", "_")
     loop = GLib.MainLoop()
     counter = [0]

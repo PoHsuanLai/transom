@@ -100,7 +100,14 @@ start_chain() {
   # The frontend records the person's answers (Access, screen sharing) in the permission store and
   # gives up on the request when it cannot reach one; the private bus has no activation for it.
   "$ps" --replace >"$state/permission-store.log" 2>&1 & echo "TRANSOM_PERMISSION_STORE_PID=$!" >> "$state/env"
-  "$xdp" >"$state/portal.log" 2>&1 & echo "TRANSOM_PORTAL_PID=$!" >> "$state/env"
+  # A host app is named to the frontend only when its app id has a desktop file the frontend can
+  # find (org.freedesktop.host.portal.Registry.Register); the cast check registers as this one,
+  # since a share is remembered only for an app with an identity.
+  mkdir -p "$state/data/applications"
+  printf '[Desktop Entry]\nType=Application\nName=Cast check\nExec=true\nNoDisplay=true\n' \
+    >"$state/data/applications/org.quire.CastCheck.desktop"
+  XDG_DATA_DIRS="$state/data:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
+    "$xdp" >"$state/portal.log" 2>&1 & echo "TRANSOM_PORTAL_PID=$!" >> "$state/env"
   # `export` on each line: callers source this file in their own shell and start more clients
   # (a fake shell, a cast) that must find the same bus.
   {
