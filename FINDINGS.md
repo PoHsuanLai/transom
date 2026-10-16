@@ -329,9 +329,8 @@ ARCHITECTURE section 3b-2.
   `AvailableCursorModes`, `AvailableTargets` itself. They are constants. Closes if a property ever carries state.
 - **Sill `DoNotQueue`.** sill requesting `org.quire.Shell` with `DoNotQueue` and failing loudly if it is taken is
   sill's half of PORTAL-10 (not in this repo).
-- **The jailed chain** (`dev/`) has no caller table and no `portal_frontend`, so its portal refuses everything now.
-  It needs a table whose rows name the chain's fake frontend and fake shell (root-owned, which a jail can have), and
-  `dev/lib/chain.sh`'s fake shell must be the table's shell. Closes with that dev lane.
+- **The jailed chain** (`dev/`) has no caller table and no `portal_frontend`, so its portal refused everything.
+  Closed 2026-10-17: see "The jailed chain is let in" below.
 - **No test of the real `Full` path.** Tests introduce standings. Whether the unit manager confirms
   `xdg-desktop-portal.service` on each supported distribution is a gate-run fact (the sample table's exe lists).
 
@@ -340,3 +339,27 @@ ARCHITECTURE section 3b-2.
 - peephole: none. The desktop table must name `portal_frontend` (unit `xdg-desktop-portal.service`) and `shell`
   (`sill.service`); the sample table does.
 - sill: serve `org.quire.Shell` with `DoNotQueue` (above).
+
+## The jailed chain is let in (lane devc, 2026-10-17)
+
+The jail has no root-owned table and no unit manager, so every call from `xdg-desktop-portal` was refused as an
+unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_toml_dev`, `TableFiles::load_dev`,
+`Proof::Dev` below `Proof::Cgroup`, `Requirement::dev`); transom takes them the way sill does.
+
+- **Feature `debug`** on the transom crate turns on `peephole-bus/dev-rows` and nothing else. It is off by default and
+  in every shipped build (the desktop gate greps for `dev-rows`).
+- **`TRANSOM_DEV_CALLERS=FILE`**, read in `main.rs` only in that build. `dev_rows::with_dev_rows` loads the person's
+  own file and merges it after the shipped table. A file that cannot be taken (a link, writable by others, not a table,
+  a row without `exe`, missing) stops the start with the reason, not a portal that quietly refuses its stand-ins.
+- **Accepted proof.** `peers::need` lists `Requirement::dev(role)` beside `Proof::Full` for the portal frontend and the
+  shell in that build only. That also lets in the real programs at any proof (`Requirement::dev` is "any proof"), so
+  `guard.rs`'s weak-proof case is part of the release-shaped build only; `dev_callers.rs` covers the `debug` build.
+- **The rows the harness writes** (one per stand-in; the frontend's image is the real `xdg-desktop-portal`):
+  `[[peer]]` with `app = "org.freedesktop.portal.Desktop"`, `role = "portal_frontend"`, `exe = ["/usr/libexec/xdg-desktop-portal"]`,
+  and one with `app = "org.quire.Shell"`, `role = "shell"`, `exe = [<the stand-in shell's image>]`. A shipped row that
+  claims the same image wins over a developer row.
+- **Dev scripts.** `dev/lib/chain.sh` passes `TRANSOM_DEV_CALLERS` to transom; no dev script builds transom (they take
+  `TRANSOM_BIN`), so the caller builds it with `--features debug` (documented at the top of `chain.sh`).
+- **Not verified here (no compile, no run):** the new tests, the build with and without the feature, and the
+  `Cargo.lock` move from peephole v0.1.1 to v0.1.4. The workspace `rustix` gains the `process` feature (the person's user
+  id), which adds no crate.

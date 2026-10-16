@@ -1,4 +1,5 @@
-//! The `transom` binary: parse nothing, build the real seams, serve until killed.
+//! The `transom` binary: parse nothing, build the real seams, serve until killed. A build with the
+//! `debug` feature also reads `TRANSOM_DEV_CALLERS`, the person's own rows file.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -19,12 +20,19 @@ async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    let callers = match with_person_rows(caller_table()) {
+        Ok(callers) => callers,
+        Err(reason) => {
+            tracing::error!(%reason, "the portal could not start");
+            return ExitCode::FAILURE;
+        }
+    };
     let parts = Parts::real(
         FileStore::new(state_file()),
         DesktopAppearance::at(appearance_file()),
     )
     .with_names(app_names())
-    .with_callers(caller_table());
+    .with_callers(callers);
     let parts = {
         let setup = screenshots(parts.link());
         parts.with_screenshots(setup)
@@ -51,6 +59,34 @@ fn caller_table() -> Table {
             tracing::error!(%error, "the table of the desktop's own programs could not be loaded, so every call is refused");
             Table::empty()
         })
+}
+
+/// The variable that names the person's own rows file, in a build with the `debug` feature.
+#[cfg(feature = "debug")]
+const DEV_CALLERS_VAR: &str = "TRANSOM_DEV_CALLERS";
+
+/// `shipped`, with the rows of the file `TRANSOM_DEV_CALLERS` names added after it: callers they
+/// name are let in as the portal frontend or the shell, below every real proof. Unset or empty adds
+/// nothing. A file that cannot be taken stops the start (the reason says why), so a jail never runs
+/// with stand-ins that are quietly refused.
+#[cfg(feature = "debug")]
+fn with_person_rows(shipped: Table) -> Result<Table, String> {
+    let Some(path) = std::env::var_os(DEV_CALLERS_VAR)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+    else {
+        return Ok(shipped);
+    };
+    let rows = transom::dev_rows::with_dev_rows(shipped, &path)
+        .map_err(|error| format!("{DEV_CALLERS_VAR} {}: {error}", path.display()))?;
+    tracing::warn!(file = %path.display(), "callers named in the person's own rows file are let in below every real proof");
+    Ok(rows)
+}
+
+/// A release build has no rows file of the person's: `shipped` as it is.
+#[cfg(not(feature = "debug"))]
+fn with_person_rows(shipped: Table) -> Result<Table, String> {
+    Ok(shipped)
 }
 
 /// Where restore tokens are kept: `$XDG_STATE_HOME/transom/restore`, or under `$HOME/.local/state`.

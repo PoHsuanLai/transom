@@ -18,11 +18,14 @@
 //! Who may call, and whom the portal asks, is decided by [`peers`] and [`shell`]: a call to any
 //! interface is refused unless it comes from the portal frontend ([`peers::FrontendOnly`]), and a
 //! question goes only to the program the caller table names as the shell, confirmed again for
-//! every question ([`shell`]).
+//! every question ([`shell`]). A build with the `debug` feature also takes the person's own rows
+//! (`dev_rows`); a release build has no such seam.
 
 pub mod access;
 pub mod capture;
 pub mod chooser;
+#[cfg(feature = "debug")]
+pub mod dev_rows;
 pub mod error;
 pub(crate) mod fsread;
 pub mod inhibit;

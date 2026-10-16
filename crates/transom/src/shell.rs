@@ -14,10 +14,11 @@
 use std::future::Future;
 
 use peephole_bus::OwnerWatch;
-use peephole_bus::peephole_core::{Proof, Requirement, roles};
+use peephole_bus::peephole_core::roles;
 
 use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
 use crate::link::BusLink;
+use crate::peers::need;
 
 /// The well-known name the shell answers on.
 pub const SHELL_NAME: &str = "org.quire.Shell";
@@ -45,11 +46,13 @@ impl Door {
             tracing::warn!(%error, "the shell's name could not be watched, so it is not asked");
             ChooserError::NotTheShell
         })?;
-        let need = [Requirement::new(roles::SHELL, Proof::Full)];
-        let owner = peers.owner_of(SHELL_NAME, &need).await.map_err(|refused| {
-            tracing::warn!(%refused, "the shell could not be confirmed, so it is not asked");
-            ChooserError::NotTheShell
-        })?;
+        let owner = peers
+            .owner_of(SHELL_NAME, &need(roles::SHELL))
+            .await
+            .map_err(|refused| {
+                tracing::warn!(%refused, "the shell could not be confirmed, so it is not asked");
+                ChooserError::NotTheShell
+            })?;
         let shell = Shell1Proxy::builder(&connection)
             .destination(owner)
             .map_err(call_failed)?

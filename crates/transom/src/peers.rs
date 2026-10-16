@@ -8,7 +8,8 @@
 //!
 //! Before any of that, every call to a portal interface must come from the portal frontend:
 //! [`FrontendOnly`] asks [`peephole_bus`] who the sender is and refuses anyone but the program the
-//! caller table names as the frontend. A session or request also remembers the peer that made it
+//! caller table names as the frontend (a build with the `debug` feature also takes the person's own
+//! rows, see `dev_rows`). A session or request also remembers the peer that made it
 //! ([`Creator`]) and only that peer may end or change it.
 
 use std::future::poll_fn;
@@ -16,7 +17,7 @@ use std::pin::pin;
 use std::time::Duration;
 
 use peephole_bus::peephole::RealProc;
-use peephole_bus::peephole_core::{Proof, Refused, Requirement, Table, roles};
+use peephole_bus::peephole_core::{Proof, Refused, Requirement, RoleName, Table, roles};
 use peephole_bus::{BusPeers, ManagerCheck, ManagerLink, Tokio, access_denied};
 use zbus::export::futures_core::Stream;
 use zbus::message::Header;
@@ -38,6 +39,23 @@ pub type Peers = BusPeers<RealProc, Tokio, ManagerLink<RealProc>>;
 pub fn peers_on(connection: Connection, table: Table) -> Peers {
     let manager = ManagerCheck::Verified(Requirement::new(roles::MANAGER, Proof::Exe));
     BusPeers::new(connection, table, manager).with_offload(Tokio)
+}
+
+/// What lets a caller in as `role`: the role proved `Full` (its image and its unit, as the unit
+/// manager states it). In a build with the `debug` feature the role at `Proof::Dev` is accepted as
+/// well, which only a stand-in named in the person's own rows file (`TRANSOM_DEV_CALLERS`) has at
+/// that standing; that also lets in the real program at any proof, which a debug build wants. A
+/// release build lists only the first.
+pub(crate) fn need(role: RoleName) -> Vec<Requirement> {
+    let real = Requirement::new(role.clone(), Proof::Full);
+    #[cfg(feature = "debug")]
+    {
+        vec![real, Requirement::dev(role)]
+    }
+    #[cfg(not(feature = "debug"))]
+    {
+        vec![real]
+    }
 }
 
 /// The well-known name of the portal frontend, the peer that relays every app's calls.
@@ -162,9 +180,9 @@ impl FrontendOnly {
             tracing::warn!("a call arrived before callers could be told apart, so it is refused");
             return Err(access_denied(Refused::Unknown));
         };
-        let need = [Requirement::new(roles::PORTAL_FRONTEND, Proof::Full)];
+        let wanted = need(roles::PORTAL_FRONTEND);
         let sender = header.sender().map(|s| s.as_str());
-        match peers.require(sender, &need).await {
+        match peers.require(sender, &wanted).await {
             Ok(_) => Ok(Creator::of(header)),
             Err(refused) => {
                 tracing::warn!(%refused, ?sender, "a call that is not from the portal frontend was refused");

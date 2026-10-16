@@ -37,10 +37,15 @@ pub fn introduce(peers: &Peers, who: &Connection, standing: Option<Standing>) {
 
 /// Make `who` stand as the portal frontend, proved fully.
 pub fn as_frontend(peers: &Peers, who: &Connection) {
+    as_frontend_at(peers, who, Proof::Full);
+}
+
+/// Make `who` stand as the portal frontend, proved only as far as `proof`.
+pub fn as_frontend_at(peers: &Peers, who: &Connection, proof: Proof) {
     let standing = introduced_service(
         "org.freedesktop.portal.Desktop",
         "portal_frontend",
-        Proof::Full,
+        proof,
         Pin::AtConnect,
     );
     introduce(peers, who, standing);
@@ -48,12 +53,17 @@ pub fn as_frontend(peers: &Peers, who: &Connection) {
 
 /// Make `who` stand as the shell, proved fully.
 pub fn as_shell(peers: &Peers, who: &Connection) {
-    let standing = introduced_service("org.quire.Shell", "shell", Proof::Full, Pin::AtConnect);
+    as_shell_at(peers, who, Proof::Full);
+}
+
+/// Make `who` stand as the shell, proved only as far as `proof`.
+pub fn as_shell_at(peers: &Peers, who: &Connection, proof: Proof) {
+    let standing = introduced_service("org.quire.Shell", "shell", proof, Pin::AtConnect);
     introduce(peers, who, standing);
 }
 
 /// Whether the call was refused as a caller that is not allowed.
-fn is_refused<T>(result: &zbus::Result<T>) -> bool {
+pub fn is_refused<T>(result: &zbus::Result<T>) -> bool {
     const NAMES: [&str; 2] = [
         "org.freedesktop.DBus.Error.AccessDenied",
         "org.freedesktop.portal.Error.NotAllowed",
@@ -105,7 +115,12 @@ impl Portal {
     }
 }
 
-async fn call<B>(who: &Connection, interface: &str, method: &str, body: &B) -> zbus::Result<Message>
+pub async fn call<B>(
+    who: &Connection,
+    interface: &str,
+    method: &str,
+    body: &B,
+) -> zbus::Result<Message>
 where
     B: zbus::export::serde::ser::Serialize + zbus::zvariant::DynamicType,
 {
@@ -117,12 +132,12 @@ where
     .expect("the portal answered in time")
 }
 
-fn path(text: &str) -> ObjectPath<'static> {
+pub fn path(text: &str) -> ObjectPath<'static> {
     ObjectPath::try_from(text.to_owned()).expect("an object path")
 }
 
 /// A reply of the shape `(u, a{sv})`: the response code.
-fn code(reply: &Message) -> u32 {
+pub fn code(reply: &Message) -> u32 {
     reply
         .body()
         .deserialize::<(u32, Dict)>()
@@ -130,11 +145,11 @@ fn code(reply: &Message) -> u32 {
         .0
 }
 
-const CAST: &str = "org.freedesktop.impl.portal.ScreenCast";
+pub const CAST: &str = "org.freedesktop.impl.portal.ScreenCast";
 const REMOTE: &str = "org.freedesktop.impl.portal.RemoteDesktop";
 const INHIBIT: &str = "org.freedesktop.impl.portal.Inhibit";
 const SESSION: &str = "org.freedesktop.impl.portal.Session";
-const REQUEST_PATH: &str = "/org/freedesktop/portal/desktop/request/x/r";
+pub const REQUEST_PATH: &str = "/org/freedesktop/portal/desktop/request/x/r";
 
 /// Every method of every portal interface, called as `who`; each with its label.
 async fn every_method(who: &Connection) -> Vec<(&'static str, zbus::Result<Message>)> {
@@ -281,22 +296,18 @@ async fn only_the_portal_frontend_may_call_any_method() {
     );
     let shell = portal.client().await;
     as_shell(&portal.peers, &shell);
+    #[cfg_attr(feature = "debug", allow(unused_mut))] // only a release build adds the weak proof
+    let mut refused = vec![("a stranger", &stranger), ("the shell", &shell)];
+    // A build with `debug` lists `Proof::Dev` as a way in, and every proof is at least that, so
+    // a frontend proved by its image alone is let in there; `dev_callers.rs` covers that build.
+    #[cfg(not(feature = "debug"))]
     let weak = portal.client().await;
-    introduce(
-        &portal.peers,
-        &weak,
-        introduced_service(
-            "org.freedesktop.portal.Desktop",
-            "portal_frontend",
-            Proof::Exe,
-            Pin::AtConnect,
-        ),
-    );
-    for (who, caller) in [
-        ("a stranger", &stranger),
-        ("the shell", &shell),
-        ("a weak proof", &weak),
-    ] {
+    #[cfg(not(feature = "debug"))]
+    {
+        as_frontend_at(&portal.peers, &weak, Proof::Exe);
+        refused.push(("a weak proof", &weak));
+    }
+    for (who, caller) in refused {
         for (label, result) in every_method(caller).await {
             assert!(is_refused(&result), "{who} calling {label}: {result:?}");
         }

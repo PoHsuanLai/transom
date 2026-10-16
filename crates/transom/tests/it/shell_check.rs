@@ -186,3 +186,24 @@ async fn a_question_ends_as_a_no_when_the_shell_changes_while_it_is_open() {
     );
     assert_eq!(response_of(&ended), 1, "an ended question is a no");
 }
+
+/// A build with `debug` asks a stand-in shell that only the person's own rows name (`Proof::Dev`).
+#[cfg(feature = "debug")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shell_named_in_the_persons_rows_is_asked() {
+    let Some(portal) = start_portal().await else {
+        return;
+    };
+    let asker = ShellAsker::new(portal.link.clone());
+    let (shell, asked) = stand_in(&portal, Answers::Yes).await;
+    crate::guard::as_shell_at(
+        &portal.peers,
+        &shell,
+        peephole_bus::peephole_core::Proof::Dev,
+    );
+    assert_eq!(
+        ask(&asker).await.expect("the stand-in shell answers"),
+        Answer::Granted
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}

@@ -24,16 +24,19 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # Capture of outputs and single windows: ext-image-capture-source and ext-image-copy-capture.
 wayland-client = "0.31"
 # Waiting on the Wayland socket for a bounded time (the same crate wayland-client polls with), an
-# anonymous in-memory file for frame buffers (`memfd_create`) and a non-blocking open (`fs`).
-rustix = { version = "1.1", default-features = false, features = ["std", "event", "fs"] }
+# anonymous in-memory file for frame buffers (`memfd_create`), a non-blocking open (`fs`) and the person's own
+# user id (`process`; used only by the `debug` feature's rows file check).
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "fs", "process"] }
 wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 # The PipeWire client (MIT). Needs the libpipewire development files to build.
 pipewire = "0.10"
 # PNG encoding for Screenshot (MIT OR Apache-2.0).
 image = { version = "0.25.6", default-features = false, features = ["png"] }
 # Which program is calling (the portal frontend, the shell), judged against the root-owned caller table.
-# zbus runs on tokio here, so the default executor feature is off. `fake` is a dev-only addition.
-peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.1", default-features = false, features = ["tokio", "desktop"] }
+# zbus runs on tokio here, so the default executor feature is off. `fake` is a dev-only addition; `dev-rows`
+# (a person's own rows file, `Proof::Dev`) is only behind the transom crate's `debug` feature, so no shipped
+# build has it.
+peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.4", default-features = false, features = ["tokio", "desktop"] }
 proptest = "1"
 tempfile = "3"
 

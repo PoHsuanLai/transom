@@ -23,7 +23,7 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 
 ```
 crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, pacing, settings_values}.rs
-crates/transom/src/{lib, main, error, link, peers, shell, names, fsread, random, chooser, screenshot, settings, access}.rs
+crates/transom/src/{lib, main, error, link, peers, dev_rows (feature debug), shell, names, fsread, random, chooser, screenshot, settings, access}.rs
                    screenshot/{layout, color, service}.rs
                    remote_desktop/{mod, book, sessions, object, consent, eis, devices}.rs
                    inhibit/{mod, hub, effect}.rs
@@ -78,7 +78,7 @@ shell's owner check, on a private bus.
 
 ## 3b-2. Who may call, and whom the portal asks (PORTAL-03, PORTAL-10)
 
-Caller identity is `peephole-bus` (git, tag v0.1.0, feature `tokio` and `desktop`); `serve` builds one
+Caller identity is `peephole-bus` (git, tag v0.1.4, feature `tokio` and `desktop`); `serve` builds one
 `peers::Peers` on the name-owning connection from the root-owned caller table
 (`/etc/quire/desktop-callers.toml`, loaded by `main.rs`; a table that cannot be loaded is empty, so nobody is
 recognised, every call is refused and the shell is never asked).
@@ -101,6 +101,17 @@ recognised, every call is refused and the shell is never asked).
   bus that does not answer are `ChooserError::NotTheShell`. `ChooserError::is_refusal` groups these with
   `Unavailable`: the picker is a cancel, a sheet is a no, remote control grants nothing. Picker, sheets and colour
   picker all go through `Door`.
+- **The person's own rows (feature `debug`).** The desktop's test jail has no `/etc/quire/desktop-callers.toml` and no
+  unit manager, so a stand-in frontend or shell built in a checkout could never be recognised. Built with
+  `--features debug` (which alone turns on `peephole-bus/dev-rows`; it is no default feature and no shipped build has
+  it), `main.rs` reads `TRANSOM_DEV_CALLERS=FILE`, the only place it is read, and `dev_rows::with_dev_rows` adds the
+  file's `[[peer]]` rows after the shipped table (a plain file of the person's, or root's, that group and others cannot
+  write; a link is refused). A file that cannot be taken stops the start with the reason in the log. A caller a row names
+  has `Proof::Dev`, below every real proof; `peers::need` lists `Proof::Dev` beside `Proof::Full` for the frontend and the
+  shell in that build only (which also lets in the real program at any proof). A release build has no variable, no
+  module and no `dev-rows`. Limits: a debug build is not a security boundary (the person's own file says who is a
+  service), and a row never outranks a shipped row for the same image or unit. The jail's scripts pass
+  `TRANSOM_DEV_CALLERS` on (`dev/lib/chain.sh`).
 - Tests: `tests/it/guard.rs` (each method refuses a stranger, the shell and a frontend proved only by image; sessions
   and monitors are closed and changed only by their opener) and `tests/it/shell_check.rs` (a squatter is never asked,
   the owner is looked up again after a restart, a question open when the shell changes ends as a no), on a private

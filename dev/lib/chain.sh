@@ -8,6 +8,15 @@
 # the exports and one pid per line. Processes are stopped by pid, never by name.
 
 # Where binaries come from. TRANSOM_BIN: the built transom; the system ones are looked up on PATH.
+#
+# TRANSOM_DEV_CALLERS (optional): a rows file of the person's own, passed on to transom. The jail has
+# no /etc/quire/desktop-callers.toml, so without it every call from xdg-desktop-portal is refused as
+# an unknown caller. The file names the stand-ins ([[peer]] rows with app, role and exe; for the
+# frontend app "org.freedesktop.portal.Desktop", role "portal_frontend", exe
+# ["/usr/libexec/xdg-desktop-portal"]; for the shell role "shell"). It must be a plain file of the
+# person's, not writable by group or others. Only a transom built with `--features debug`
+# (`cargo build -p transom --features debug`) reads it; a release build has no such variable and
+# refuses the frontend. TRANSOM_BIN must point at the debug-feature build when this is set.
 transom_tool() {
   local name=$1
   case "$name" in
@@ -82,7 +91,12 @@ start_chain() {
   # The linking and node topics at info level: the log then says which node got a session item and
   # why a consumer's target was or was not found (a screencast check reads it).
   WIREPLUMBER_DEBUG=2,s-linking:4,s-node:4 "$wp" >"$state/wireplumber.log" 2>&1 & echo "TRANSOM_WIREPLUMBER_PID=$!" >> "$state/env"
-  "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
+  # transom stops at start, saying why in its log, when the rows file cannot be taken.
+  if [ -n "${TRANSOM_DEV_CALLERS:-}" ]; then
+    TRANSOM_DEV_CALLERS=$TRANSOM_DEV_CALLERS "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
+  else
+    "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
+  fi
   # The frontend records the person's answers (Access, screen sharing) in the permission store and
   # gives up on the request when it cannot reach one; the private bus has no activation for it.
   "$ps" --replace >"$state/permission-store.log" 2>&1 & echo "TRANSOM_PERMISSION_STORE_PID=$!" >> "$state/env"

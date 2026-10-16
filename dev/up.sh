@@ -7,7 +7,9 @@
 #
 # With --env, joins the headless compositor session that file describes (the capture checks need
 # one); without, there is no compositor and only the Settings and Inhibit checks can run.
-# Needs TRANSOM_BIN (the built transom binary).
+# Needs TRANSOM_BIN (the built transom binary). TRANSOM_DEV_CALLERS (a rows file naming the
+# stand-ins for the portal frontend and the shell; transom built with --features debug) is passed on
+# to transom; see dev/lib/chain.sh.
 #
 # Owner: P2-Z-tr (skeleton). Exit codes: 0 up, 1 the chain did not come up, 2 outside the jail,
 # 3 a tool is missing.

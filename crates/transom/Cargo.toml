@@ -15,6 +15,12 @@ name = "transom"
 name = "transom"
 path = "src/main.rs"
 
+[features]
+# `TRANSOM_DEV_CALLERS=FILE`: callers named in a person's own rows file are let in as the portal
+# frontend or the shell at `Proof::Dev` (peephole's `dev-rows`). Off by default; the desktop's test
+# jail and the dev scripts build with it. A release build has neither the variable nor `dev-rows`.
+debug = ["peephole-bus/dev-rows"]
+
 [dependencies]
 transom-core = { workspace = true }
 thiserror = { workspace = true }
