@@ -228,6 +228,7 @@ impl SessionObject {
 #[zbus::interface(name = "org.freedesktop.impl.portal.RemoteDesktop")]
 impl RemoteDesktopService {
     /// Open a session.
+    #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
     async fn create_session(
         &self,
         handle: ObjectPath<'_>,

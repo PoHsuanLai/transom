@@ -131,6 +131,7 @@ mod interface {
     #[zbus::interface(name = "org.freedesktop.impl.portal.Inhibit")]
     impl InhibitService {
         /// Hold a request until its request object is closed.
+        #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
         async fn inhibit(
             &self,
             handle: ObjectPath<'_>,

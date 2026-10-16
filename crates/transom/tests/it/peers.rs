@@ -1,8 +1,11 @@
 use transom::peers::{Admission, FRONTEND_NAME, HOLD_LIMITS, Limits, Tether, admit, departed};
 
+/// A name, its old owner, its new owner, and the peer taken off (if any).
+type OwnerChange<'a> = (&'a str, Option<&'a str>, Option<&'a str>, Option<&'a str>);
+
 #[test]
 fn a_change_of_owner_takes_a_peer_off_only_when_it_has_left_or_stopped_being_the_frontend() {
-    let table: [(&str, Option<&str>, Option<&str>, Option<&str>); 8] = [
+    let table: [OwnerChange; 8] = [
         // A peer disconnects.
         (":1.7", Some(":1.7"), None, Some(":1.7")),
         // A peer connects.
@@ -49,5 +52,5 @@ fn limits_count_per_caller_and_in_total() {
         Admission::Allowed,
         "callers we cannot name are only held to the total"
     );
-    assert!(HOLD_LIMITS.per_caller <= HOLD_LIMITS.total);
+    const { assert!(HOLD_LIMITS.per_caller <= HOLD_LIMITS.total) };
 }

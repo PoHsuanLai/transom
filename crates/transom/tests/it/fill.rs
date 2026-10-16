@@ -11,7 +11,7 @@ use transom_core::{CastSource, CursorMode, RestoreBook, RestoreToken};
 
 #[test]
 fn the_desktop_appearance_reads_without_error() {
-    let mut source = DesktopAppearance::new();
+    let source = DesktopAppearance::new();
     assert!(source.current().is_ok());
 }
 

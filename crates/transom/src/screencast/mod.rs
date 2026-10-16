@@ -79,6 +79,7 @@ impl SessionObject {
 #[zbus::interface(name = "org.freedesktop.impl.portal.ScreenCast")]
 impl ScreenCastService {
     /// Open a session. `options` is empty today; the reply carries `session_id`.
+    #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
     async fn create_session(
         &self,
         handle: ObjectPath<'_>,
