@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+use tokio::sync::Semaphore;
 
 use transom_core::{Rgb, SettingValue};
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
@@ -16,6 +19,10 @@ use crate::settings::wire_value;
 const RESPONSE_OK: u32 = 0;
 const RESPONSE_CANCELLED: u32 = 1;
 const RESPONSE_FAILED: u32 = 2;
+
+/// The longest a whole screenshot may take, from the grab to the file. Each step has a deadline of
+/// its own; this is the sum with room to spare, so an answer always comes.
+const SHOT_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Who asks the person before a picture is taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +77,9 @@ fn wire_color(color: Rgb) -> Option<OwnedValue> {
 pub struct ScreenshotService {
     setup: Arc<ScreenshotSetup>,
     seq: AtomicU32,
+    /// One permit: one screenshot is being taken at a time. A picture is held in memory several
+    /// times over while it is made, and a caller must not be able to start many at once.
+    one_at_a_time: Arc<Semaphore>,
 }
 
 impl Default for ScreenshotService {
@@ -89,6 +99,7 @@ impl ScreenshotService {
         Self {
             setup: Arc::new(setup),
             seq: AtomicU32::new(0),
+            one_at_a_time: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -103,13 +114,27 @@ impl ScreenshotService {
                 return (code, Dict::new());
             }
         }
+        // Another screenshot is being taken: refuse this one at once rather than queue it.
+        let Ok(permit) = Arc::clone(&self.one_at_a_time).try_acquire_owned() else {
+            tracing::warn!("a screenshot was asked for while another was being taken");
+            return (RESPONSE_FAILED, Dict::new());
+        };
         let setup = Arc::clone(&self.setup);
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let made = tokio::task::spawn_blocking(move || {
+        // The permit moves into the blocking work, so it is let go when that really ends, even
+        // if the deadline below passes first.
+        let work = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             let path = take(&setup, seq)?;
             file_uri(&path)
-        })
-        .await;
+        });
+        let made = match tokio::time::timeout(SHOT_DEADLINE, work).await {
+            Ok(joined) => joined,
+            Err(_) => {
+                tracing::warn!("a screenshot took too long");
+                return (RESPONSE_FAILED, Dict::new());
+            }
+        };
         match made {
             Ok(Ok(uri)) => {
                 let mut results = Dict::new();

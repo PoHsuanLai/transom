@@ -337,3 +337,57 @@ async fn with_no_shell_to_ask_an_interactive_screenshot_is_refused() {
     assert_eq!(code, 1);
     assert!(!dir.path().join("Pictures").exists());
 }
+
+#[test]
+fn a_screenshot_is_private_and_whole_under_its_final_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let setup = ScreenshotSetup::new(
+        Box::new(OutputGrab::new(
+            Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
+            Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
+        )),
+        dir.path().join("Pictures"),
+        "t".into(),
+    );
+    let path = take(&setup, 0).expect("take");
+    let mode = std::fs::metadata(&path)
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "readable by its owner only");
+    let names: Vec<_> = std::fs::read_dir(dir.path().join("Pictures"))
+        .expect("dir")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no partial file is left: {names:?}");
+}
+
+#[test]
+fn a_taken_name_is_skipped_and_never_overwritten() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pictures = dir.path().join("Pictures");
+    std::fs::create_dir_all(&pictures).expect("dir");
+    std::fs::write(pictures.join("Screenshot-t-0.png"), b"mine").expect("write");
+    // A leftover of a crashed run sits where the next name's partial file would go.
+    std::fs::write(pictures.join("Screenshot-t-1.png.part"), b"stale").expect("write");
+    let setup = ScreenshotSetup::new(
+        Box::new(OutputGrab::new(
+            Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
+            Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
+        )),
+        pictures.clone(),
+        "t".into(),
+    );
+    let path = take(&setup, 0).expect("take");
+    assert_eq!(path, pictures.join("Screenshot-t-2.png"));
+    assert_eq!(
+        std::fs::read(pictures.join("Screenshot-t-0.png")).expect("read"),
+        b"mine"
+    );
+    assert_eq!(
+        std::fs::read(pictures.join("Screenshot-t-1.png.part")).expect("read"),
+        b"stale",
+        "somebody else's partial file is left alone"
+    );
+}
