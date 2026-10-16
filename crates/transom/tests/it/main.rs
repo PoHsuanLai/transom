@@ -9,6 +9,7 @@ mod fill;
 mod inhibit;
 mod names;
 mod options;
+mod peers;
 mod pixels;
 mod remote_desktop;
 mod restore_file;

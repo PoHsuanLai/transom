@@ -20,6 +20,7 @@ use std::sync::Arc;
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
 use crate::chooser::Chooser;
+use crate::peers::Tether;
 use flow::Shared;
 use restore::RestoreStore;
 use session::SessionKey;
@@ -38,6 +39,14 @@ impl ScreenCastService {
     pub fn new(chooser: Box<dyn Chooser>, restore: Box<dyn RestoreStore>) -> Self {
         Self {
             shared: Arc::new(Shared::new(chooser, restore)),
+        }
+    }
+
+    /// End every session hung on `peer` (a unique name that left the bus, or stopped being the
+    /// portal frontend): its streams stop and its session objects leave the bus.
+    pub async fn peer_gone(&self, peer: &str, connection: &zbus::Connection) {
+        for key in self.shared.close_for_peer(peer) {
+            flow::forget_object(connection, &key).await;
         }
     }
 
@@ -77,11 +86,19 @@ impl ScreenCastService {
         app_id: &str,
         options: Dict,
         #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> (u32, Dict) {
         let _ = (handle, options);
         let key = SessionKey(session_handle.to_string());
-        if !self.shared.create(&key, app_id) {
-            return (2, Dict::new());
+        let tether = Tether::of(connection, &header).await;
+        match self.shared.create(&key, app_id, tether) {
+            Ok(dropped) => {
+                for old in dropped {
+                    flow::forget_object(connection, &old).await;
+                }
+            }
+            Err(_) => return (2, Dict::new()),
         }
         let object = SessionObject {
             key: key.clone(),

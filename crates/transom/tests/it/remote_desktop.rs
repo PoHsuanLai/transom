@@ -5,6 +5,7 @@ use std::sync::Arc;
 use transom::BoxFuture;
 use transom::access::{Answer, Asker, FakeAsker, Question};
 use transom::chooser::ChooserError;
+use transom::peers::Tether;
 use transom::remote_desktop::{
     ConnectError, Consent, ConsentAnswer, ConsentError, DeviceKinds, FakeConsent, FakeEis,
     RemoteDesktopService, ShellConsent,
@@ -303,4 +304,46 @@ async fn a_session_that_never_took_a_socket_has_nothing_to_take_back() {
     service.close(&key(1)).await;
     service.close(&key(2)).await;
     assert!(eis.ended().is_empty());
+}
+
+#[tokio::test]
+async fn sessions_end_with_the_peer_they_hang_on_and_their_sockets_are_taken_back() {
+    let (service, _, eis) = service(vec![ConsentAnswer::Allowed, ConsentAnswer::Allowed]);
+    let hung_on = |caller: &str| Tether::new(Some(caller.to_owned()), Some(":1.2".to_owned()));
+    service
+        .create_for(key(1), "a", hung_on(":1.7"))
+        .expect("room");
+    service
+        .create_for(key(2), "b", hung_on(":1.8"))
+        .expect("room");
+    for n in [1, 2] {
+        service.begin(&key(n)).await;
+        service.connect(&key(n)).await.expect("a socket");
+    }
+
+    assert_eq!(service.release_peer(":1.7").await, vec![key(1)]);
+    assert_eq!(service.len(), 1, "the other caller's session stays");
+    assert_eq!(eis.ended(), vec![1]);
+
+    // The frontend leaving ends what is left, whoever called.
+    assert_eq!(service.release_peer(":1.2").await, vec![key(2)]);
+    assert!(service.is_empty());
+    assert_eq!(eis.ended(), vec![1, 2]);
+    assert!(service.release_peer(":1.2").await.is_empty(), "once");
+}
+
+#[test]
+fn one_caller_cannot_fill_the_book_of_sessions() {
+    let (service, _, _) = service(vec![]);
+    let hung_on = Tether::new(Some(":1.7".to_owned()), None);
+    for n in 0..transom::peers::SESSION_LIMITS.per_caller {
+        let n = u32::try_from(n).expect("small");
+        assert!(service.create_for(key(n), "a", hung_on.clone()).is_ok());
+    }
+    assert!(service.create_for(key(999), "a", hung_on).is_err());
+    assert!(
+        service
+            .create_for(key(1000), "a", Tether::new(Some(":1.8".to_owned()), None))
+            .is_ok()
+    );
 }

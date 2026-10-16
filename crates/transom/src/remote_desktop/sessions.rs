@@ -3,11 +3,13 @@
 
 use std::os::fd::OwnedFd;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 
 use super::book::{Book, Entry, Socket, Stage};
 use super::devices::DeviceKinds;
 use super::eis::{EisError, EisHandout};
-use crate::screencast::session::SessionKey;
+use crate::peers::Tether;
+use crate::screencast::session::{Refusal, SessionKey};
 
 /// Why a `ConnectToEIS` was refused.
 #[derive(Debug, thiserror::Error)]
@@ -74,9 +76,25 @@ impl Core {
         self.book.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Opens `key`; `None` if the handle is open already.
-    pub fn create(&self, key: SessionKey, app_id: &str) -> Option<u64> {
-        self.lock().open(key, app_id)
+    /// Opens `key` for `app_id`, hung on `tether`; the handles dropped to make room, or why not.
+    pub fn create(
+        &self,
+        key: SessionKey,
+        app_id: &str,
+        tether: Tether,
+    ) -> Result<Vec<SessionKey>, Refusal> {
+        self.lock().open(key, app_id, tether, Instant::now())
+    }
+
+    /// Ends every session hung on `peer`, taking back the sockets handed out; the handles ended.
+    pub async fn peer_gone(&self, peer: &str) -> Vec<SessionKey> {
+        let gone = self.lock().remove_held_by(peer);
+        let mut keys = Vec::with_capacity(gone.len());
+        for (key, entry) in gone {
+            self.revoke(Some(entry)).await;
+            keys.push(key);
+        }
+        keys
     }
 
     /// Records the kinds the app wants. Only before `Start`.

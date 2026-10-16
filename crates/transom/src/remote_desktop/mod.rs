@@ -35,8 +35,9 @@ pub use self::eis::{CasementEis, EisError, EisHandout, FakeEis};
 pub use self::sessions::ConnectError;
 use self::sessions::{Core, Settled, Verdict};
 use crate::names::AppNames;
+use crate::peers::Tether;
 use crate::screencast::Dict;
-use crate::screencast::session::SessionKey;
+use crate::screencast::session::{Refusal, SessionKey};
 
 /// The portal's response codes.
 const GRANTED: u32 = 0;
@@ -71,11 +72,40 @@ impl RemoteDesktopService {
         self
     }
 
-    /// Opens the session `key` for `app_id`. A handle that is already open fails.
+    /// Opens the session `key` for `app_id`, hung on no peer. A handle that is already open
+    /// fails, and so does a full book.
     pub fn create(&self, key: SessionKey, app_id: &str) -> Reply {
-        match self.core.create(key, app_id) {
-            Some(_) => (GRANTED, Dict::new()),
-            None => failed(),
+        match self.create_for(key, app_id, Tether::default()) {
+            Ok(_) => (GRANTED, Dict::new()),
+            Err(_) => failed(),
+        }
+    }
+
+    /// Opens the session `key` for `app_id`, hung on `tether`: it ends when either peer leaves the
+    /// bus. The result is the handles dropped to make room (sessions that never began), whose
+    /// session objects the caller takes off the bus.
+    pub fn create_for(
+        &self,
+        key: SessionKey,
+        app_id: &str,
+        tether: Tether,
+    ) -> Result<Vec<SessionKey>, Refusal> {
+        self.core.create(key, app_id, tether)
+    }
+
+    /// End every session hung on `peer` (a unique name that left the bus, or stopped being the
+    /// portal frontend), taking back the sockets handed out; the handles ended.
+    pub async fn release_peer(&self, peer: &str) -> Vec<SessionKey> {
+        self.core.peer_gone(peer).await
+    }
+
+    /// As [`RemoteDesktopService::release_peer`], and take the sessions' objects off the bus.
+    pub async fn peer_gone(&self, peer: &str, connection: &zbus::Connection) {
+        for key in self.release_peer(peer).await {
+            let _ = connection
+                .object_server()
+                .remove::<SessionObject, _>(key.0.as_str())
+                .await;
         }
     }
 
@@ -205,10 +235,21 @@ impl RemoteDesktopService {
         app_id: &str,
         options: Dict,
         #[zbus(object_server)] server: &zbus::ObjectServer,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> Reply {
         let _ = (handle, options);
         let key = SessionKey(session_handle.to_string());
-        let reply = self.create(key.clone(), app_id);
+        let tether = Tether::of(connection, &header).await;
+        let reply = match self.create_for(key.clone(), app_id, tether) {
+            Ok(dropped) => {
+                for old in dropped {
+                    let _ = server.remove::<SessionObject, _>(old.0.as_str()).await;
+                }
+                (GRANTED, Dict::new())
+            }
+            Err(_) => failed(),
+        };
         if reply.0 == GRANTED {
             let object = SessionObject {
                 core: Arc::clone(&self.core),

@@ -23,6 +23,7 @@ pub(crate) mod fsread;
 pub mod inhibit;
 pub mod link;
 pub mod names;
+pub mod peers;
 pub(crate) mod random;
 pub mod remote_desktop;
 pub mod screencast;
@@ -160,6 +161,7 @@ pub async fn serve_on(
         .await?;
     link.attach(connection.clone());
     settings::spawn_watch(connection.clone());
+    peers::spawn_watch(&connection).await?;
     connection.request_name(BUS_NAME).await?;
     Ok(connection)
 }

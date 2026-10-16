@@ -1,9 +1,11 @@
 //! The sessions of the remote-control portal, and what has happened in each.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use super::devices::DeviceKinds;
-use crate::screencast::session::SessionKey;
+use crate::peers::{Admission, SESSION_LIMITS, Tether, UNSTARTED_TTL, admit};
+use crate::screencast::session::{Refusal, SessionKey};
 
 /// How far a session has come.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +37,10 @@ pub(super) struct Entry {
     pub kinds: DeviceKinds,
     pub stage: Stage,
     pub socket: Socket,
+    /// The peers the session hangs on: when one leaves the bus the session ends.
+    pub tether: Tether,
+    /// When it was opened.
+    pub opened: Instant,
 }
 
 /// Every open session.
@@ -45,24 +51,77 @@ pub(super) struct Book {
 }
 
 impl Book {
-    /// A new entry for `app_id`; its number is never reused. `None` if the handle is open.
-    pub fn open(&mut self, key: SessionKey, app_id: &str) -> Option<u64> {
+    /// A new entry for `app_id` hung on `tether` at time `now`; its number is never reused. A
+    /// full book drops the sessions that never began and are older than [`UNSTARTED_TTL`] to make
+    /// room; the result is the handles dropped.
+    pub fn open(
+        &mut self,
+        key: SessionKey,
+        app_id: &str,
+        tether: Tether,
+        now: Instant,
+    ) -> Result<Vec<SessionKey>, Refusal> {
         if self.entries.contains_key(&key) {
-            return None;
+            return Err(Refusal::AlreadyOpen);
+        }
+        let mut dropped = Vec::new();
+        if self.admits(&tether) == Admission::Full {
+            dropped = self.expire(now);
+            if self.admits(&tether) == Admission::Full {
+                return Err(Refusal::Full);
+            }
         }
         self.next += 1;
-        let id = self.next;
         self.entries.insert(
             key,
             Entry {
-                id,
+                id: self.next,
                 app_id: app_id.to_owned(),
                 kinds: DeviceKinds::ALL,
                 stage: Stage::Created,
                 socket: Socket::NotYet,
+                tether,
+                opened: now,
             },
         );
-        Some(id)
+        Ok(dropped)
+    }
+
+    fn admits(&self, tether: &Tether) -> Admission {
+        admit(
+            self.entries.values().map(|e| &e.tether),
+            tether,
+            SESSION_LIMITS,
+        )
+    }
+
+    /// Drop the sessions that never began and are older than [`UNSTARTED_TTL`] at `now`.
+    fn expire(&mut self, now: Instant) -> Vec<SessionKey> {
+        let stale: Vec<SessionKey> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| {
+                e.stage == Stage::Created && now.saturating_duration_since(e.opened) > UNSTARTED_TTL
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &stale {
+            self.entries.remove(key);
+        }
+        stale
+    }
+
+    /// Remove every session hung on `peer`; the handles and what was removed.
+    pub fn remove_held_by(&mut self, peer: &str) -> Vec<(SessionKey, Entry)> {
+        let keys: Vec<SessionKey> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.tether.holds(peer))
+            .map(|(key, _)| key.clone())
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.entries.remove(&key).map(|entry| (key, entry)))
+            .collect()
     }
 
     /// The entry under `key` if it is still entry number `id` (the handle may have been closed

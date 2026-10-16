@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 use transom_core::{
     CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, Grant, PersistMode, PwNode,
@@ -16,11 +17,12 @@ use zbus::Connection;
 use super::options;
 use super::restore::RestoreStore;
 use super::run::Share;
-use super::session::{Selection, SessionBook, SessionKey};
+use super::session::{Refusal, Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
 use crate::capture::{self, DisplayName};
 use crate::chooser::{Chooser, unavailable_is_cancel};
 use crate::names::AppNames;
+use crate::peers::Tether;
 
 /// The answer to a Start call, before it becomes wire values.
 #[derive(Debug)]
@@ -78,9 +80,23 @@ impl Shared {
         }
     }
 
-    /// Open a session; `false` if the handle is already open.
-    pub fn create(&self, key: &SessionKey, app_id: &str) -> bool {
-        held(&self.sessions).create(key.clone(), app_id).is_some()
+    /// Open a session hung on `tether`; the handles dropped to make room, or why not.
+    pub fn create(
+        &self,
+        key: &SessionKey,
+        app_id: &str,
+        tether: Tether,
+    ) -> Result<Vec<SessionKey>, Refusal> {
+        held(&self.sessions).create(key.clone(), app_id, tether, Instant::now())
+    }
+
+    /// End every session hung on `peer`, stopping its streams; the handles ended.
+    pub fn close_for_peer(&self, peer: &str) -> Vec<SessionKey> {
+        let keys = held(&self.sessions).held_by(peer);
+        for key in &keys {
+            self.close(key);
+        }
+        keys
     }
 
     /// Record the app's selection; `false` if the session is not this app's.
