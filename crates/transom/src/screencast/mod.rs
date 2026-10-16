@@ -17,10 +17,12 @@ pub mod stream;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use zbus::fdo;
+use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
 use crate::chooser::Chooser;
-use crate::peers::Tether;
+use crate::peers::{FrontendOnly, Tether};
 use flow::Shared;
 use restore::RestoreStore;
 use session::SessionKey;
@@ -32,6 +34,7 @@ pub type Dict = HashMap<String, OwnedValue>;
 #[derive(Debug)]
 pub struct ScreenCastService {
     shared: Arc<Shared>,
+    guard: FrontendOnly,
 }
 
 impl ScreenCastService {
@@ -39,6 +42,22 @@ impl ScreenCastService {
     pub fn new(chooser: Box<dyn Chooser>, restore: Box<dyn RestoreStore>) -> Self {
         Self {
             shared: Arc::new(Shared::new(chooser, restore)),
+            guard: FrontendOnly::default(),
+        }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
+    }
+
+    /// Let the call with `header` through if it is from the portal frontend and, when the session
+    /// `key` is open, from the peer that opened it.
+    async fn admit_for(&self, header: &Header<'_>, key: &SessionKey) -> fdo::Result<()> {
+        match self.shared.creator(key) {
+            Some(creator) => self.guard.admit_creator(header, &creator).await,
+            None => self.guard.admit(header).await.map(|_| ()),
         }
     }
 
@@ -65,14 +84,27 @@ impl ScreenCastService {
 pub struct SessionObject {
     key: SessionKey,
     shared: Arc<Shared>,
+    guard: FrontendOnly,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
 impl SessionObject {
-    /// The app, or the portal, ended the session: stop its streams.
-    async fn close(&self, #[zbus(connection)] connection: &zbus::Connection) {
+    /// The app, or the portal, ended the session: stop its streams. Only the peer that opened the
+    /// session may end it.
+    async fn close(
+        &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        match self.shared.creator(&self.key) {
+            Some(creator) => self.guard.admit_creator(&header, &creator).await?,
+            None => {
+                self.guard.admit(&header).await?;
+            }
+        }
         self.shared.close(&self.key);
         flow::forget_object(connection, &self.key).await;
+        Ok(())
     }
 }
 
@@ -87,10 +119,11 @@ impl ScreenCastService {
         app_id: &str,
         options: Dict,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-    ) -> (u32, Dict) {
+    ) -> fdo::Result<(u32, Dict)> {
         let _ = (handle, options);
+        self.guard.admit(&header).await?;
         let key = SessionKey(session_handle.to_string());
         let tether = Tether::of(connection, &header).await;
         match self.shared.create(&key, app_id, tether) {
@@ -99,21 +132,22 @@ impl ScreenCastService {
                     flow::forget_object(connection, &old).await;
                 }
             }
-            Err(_) => return (2, Dict::new()),
+            Err(_) => return Ok((2, Dict::new())),
         }
         let object = SessionObject {
             key: key.clone(),
             shared: Arc::clone(&self.shared),
+            guard: self.guard.clone(),
         };
         if server.at(session_handle.as_str(), object).await.is_err() {
             self.shared.close(&key);
-            return (2, Dict::new());
+            return Ok((2, Dict::new()));
         }
         let mut results = Dict::new();
         if let Ok(id) = OwnedValue::try_from(zbus::zvariant::Value::new(key.0)) {
             results.insert("session_id".to_owned(), id);
         }
-        (0, results)
+        Ok((0, results))
     }
 
     /// Record `types`, `multiple`, `cursor_mode`, `persist_mode` and `restore_data`.
@@ -123,18 +157,21 @@ impl ScreenCastService {
         session_handle: ObjectPath<'_>,
         app_id: &str,
         options: Dict,
-    ) -> (u32, Dict) {
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<(u32, Dict)> {
         let _ = handle;
         let key = SessionKey(session_handle.to_string());
+        self.admit_for(&header, &key).await?;
         let selection = options::selection(&options);
-        match self.shared.select(&key, app_id, selection) {
+        Ok(match self.shared.select(&key, app_id, selection) {
             true => (0, Dict::new()),
             false => (2, Dict::new()),
-        }
+        })
     }
 
     /// Ask the person if the token did not resolve, open the stream, reply with `streams` and,
     /// when persisting, `restore_data`.
+    #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
     async fn start(
         &self,
         handle: ObjectPath<'_>,
@@ -143,13 +180,16 @@ impl ScreenCastService {
         parent_window: &str,
         options: Dict,
         #[zbus(connection)] connection: &zbus::Connection,
-    ) -> (u32, Dict) {
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<(u32, Dict)> {
         let _ = (handle, parent_window, options);
         let key = SessionKey(session_handle.to_string());
-        self.shared
+        self.admit_for(&header, &key).await?;
+        Ok(self
+            .shared
             .start(&key, app_id, connection)
             .await
-            .into_wire()
+            .into_wire())
     }
 
     /// The source types served: displays and windows (1 and 2).

@@ -268,8 +268,8 @@ Written without a build or a run: nothing here has been compiled. Fixed in trans
 
 **Deferred, with the condition that closes each**
 
-- **PORTAL-02, 03, 10, 14, 15** (privileged globals, caller identity, the shell squatter, protocols not served): a later
-  wave, per the lane brief.
+- **PORTAL-02, 14, 15** (privileged globals, protocols not served, the accessibility root): a later wave, per the lane
+  brief. PORTAL-03 and 10 are closed below (wave 2).
 - **PORTAL-12, reusing the read buffer.** Each frame still allocates a zeroed `Vec`; the sink keeps the `Vec` inside the
   picture it holds, so reuse needs the sink to hand the buffer back. The size caps bound the churn. Closes with a
   buffer pool in `PipewireSink` and `Copier::read_frame`.
@@ -297,3 +297,46 @@ Written without a build or a run: nothing here has been compiled. Fixed in trans
   close the compositor's end), callable only by `transom.service` like `ConnectEis`. Until it exists a close logs a
   warning and the app keeps the socket it was given (PORTAL-05's other half).
 - sill: serve `org.quire.Shell1.AskPermission` (item 4 above); remote control and interactive screenshots need it.
+
+## Production audit wave 2, area PORTAL (2026-10-16, lane pa2-transom)
+
+Written without a build or a run: nothing here has been compiled or tested; the tests are written and unrun.
+Fixed: PORTAL-03 and PORTAL-10, with `peephole-bus` (tag v0.1.0) as the one way of telling callers apart. See
+ARCHITECTURE section 3b-2.
+
+**Decisions recorded**
+
+- **Frontend only, proved `Full` (PORTAL-03).** Every portal method refuses a caller that does not hold role
+  `portal_frontend` at `Full`, including the `Notify*` methods (accepted and dropped, still guarded) and Settings.
+  The frontend's unit therefore has to be provable by the desktop's table (not ours), and
+  `dist/transom.service` unsets the loader variables so transom's own `portal` standing can reach `Full` for the
+  casement and sill checks.
+- **Opener only (PORTAL-03).** The frontend is one peer for every app, so the "creator" check separates a second
+  frontend-role peer from the first and stops a session being driven by anything but its opener; it is not a
+  per-app boundary (the frontend owns that).
+- **The table is the deployment's (PORTAL-03, 10).** `main.rs` loads `/etc/quire/desktop-callers.toml`. A table that
+  is missing, unreadable or not root-only leaves the portal running and refusing everything, with an error in the log.
+  This is fail closed on purpose; it also means a machine without the table has no portal.
+- **The shell is asked by its unique name (PORTAL-10).** The owner is confirmed and the question is sent to that
+  name, so a program that takes the well-known name after the check hears nothing. An owner change while a sheet is
+  open ends it as a no (a picker as a cancel).
+- **The colour picker goes through the same door.** PORTAL-10 names the picker, the Access sheet and remote
+  control; the colour picker asks the same shell and was changed with them.
+
+**Deferred**
+
+- **Properties are not guarded.** zbus answers `Get`/`GetAll` for `version`, `AvailableSourceTypes`,
+  `AvailableCursorModes`, `AvailableTargets` itself. They are constants. Closes if a property ever carries state.
+- **Sill `DoNotQueue`.** sill requesting `org.quire.Shell` with `DoNotQueue` and failing loudly if it is taken is
+  sill's half of PORTAL-10 (not in this repo).
+- **The jailed chain** (`dev/`) has no caller table and no `portal_frontend`, so its portal refuses everything now.
+  It needs a table whose rows name the chain's fake frontend and fake shell (root-owned, which a jail can have), and
+  `dev/lib/chain.sh`'s fake shell must be the table's shell. Closes with that dev lane.
+- **No test of the real `Full` path.** Tests introduce standings. Whether the unit manager confirms
+  `xdg-desktop-portal.service` on each supported distribution is a gate-run fact (the sample table's exe lists).
+
+**Asks**
+
+- peephole: none. The desktop table must name `portal_frontend` (unit `xdg-desktop-portal.service`) and `shell`
+  (`sill.service`); the sample table does.
+- sill: serve `org.quire.Shell` with `DoNotQueue` (above).

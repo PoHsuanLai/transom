@@ -14,6 +14,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use transom_core::{InhibitFlags, RequestHandle};
 use zbus::ObjectServer;
+use zbus::fdo;
+use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
@@ -23,7 +25,7 @@ pub use self::effect::{
 pub use self::hub::{
     HoldError, InhibitHub, MAX_MONITORS, MonitorAdded, MonitorKnown, MonitorState,
 };
-use crate::peers::Tether;
+use crate::peers::{Creator, FrontendOnly, Tether};
 use crate::screencast::Dict;
 
 type SharedHub = Arc<AsyncMutex<InhibitHub>>;
@@ -34,16 +36,25 @@ struct RequestObject {
     hub: SharedHub,
     key: RequestHandle,
     path: OwnedObjectPath,
+    creator: Creator,
+    guard: FrontendOnly,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Request")]
 impl RequestObject {
-    /// The caller let go: release the hold and take the object off the bus.
-    async fn close(&self, #[zbus(object_server)] server: &ObjectServer) {
+    /// The caller let go: release the hold and take the object off the bus. Only the peer that
+    /// made the hold may let it go.
+    async fn close(
+        &self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        self.guard.admit_creator(&header, &self.creator).await?;
         if let Err(error) = self.hub.lock().await.release(&self.key).await {
             tracing::warn!(%error, "a released hold could not be passed on");
         }
         let _ = server.remove::<RequestObject, _>(self.path.as_str()).await;
+        Ok(())
     }
 }
 
@@ -52,16 +63,25 @@ impl RequestObject {
 struct MonitorObject {
     hub: SharedHub,
     session: String,
+    creator: Creator,
+    guard: FrontendOnly,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
 impl MonitorObject {
-    /// The caller let go: stop monitoring and take the object off the bus.
-    async fn close(&self, #[zbus(object_server)] server: &ObjectServer) {
+    /// The caller let go: stop monitoring and take the object off the bus. Only the peer that
+    /// started the monitor may stop it.
+    async fn close(
+        &self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        self.guard.admit_creator(&header, &self.creator).await?;
         self.hub.lock().await.remove_monitor(&self.session);
         let _ = server
             .remove::<MonitorObject, _>(self.session.as_str())
             .await;
+        Ok(())
     }
 
     /// The interface version.
@@ -89,6 +109,7 @@ fn initial_state() -> Dict {
 #[derive(Debug)]
 pub struct InhibitService {
     hub: SharedHub,
+    guard: FrontendOnly,
 }
 
 impl Default for InhibitService {
@@ -119,7 +140,14 @@ impl InhibitService {
     pub fn with_effect(effect: Box<dyn InhibitEffect>) -> Self {
         Self {
             hub: Arc::new(AsyncMutex::new(InhibitHub::new(effect))),
+            guard: FrontendOnly::default(),
         }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
     }
 }
 
@@ -140,10 +168,11 @@ mod interface {
             flags: u32,
             options: Dict,
             #[zbus(object_server)] server: &ObjectServer,
-            #[zbus(header)] header: zbus::message::Header<'_>,
+            #[zbus(header)] header: Header<'_>,
             #[zbus(connection)] connection: &zbus::Connection,
-        ) {
+        ) -> fdo::Result<()> {
             let _ = (app_id, window, options);
+            let creator = self.guard.admit(&header).await?;
             let key = RequestHandle(handle.to_string());
             let tether = Tether::of(connection, &header).await;
             if let Err(error) = self
@@ -154,19 +183,23 @@ mod interface {
                 .await
             {
                 tracing::warn!(%error, "a request to keep the session running was not held");
-                return;
+                return Ok(());
             }
             let request = RequestObject {
                 hub: Arc::clone(&self.hub),
                 key,
                 path: OwnedObjectPath::from(handle.clone()),
+                creator,
+                guard: self.guard.clone(),
             };
             if let Err(error) = server.at(handle.as_str(), request).await {
                 tracing::warn!(%error, "the request object could not be exported");
             }
+            Ok(())
         }
 
         /// Start watching the session state (screen locked, idle); returns the response code.
+        #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
         async fn create_monitor(
             &self,
             handle: ObjectPath<'_>,
@@ -175,35 +208,63 @@ mod interface {
             window: &str,
             #[zbus(object_server)] server: &ObjectServer,
             #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-        ) -> u32 {
+            #[zbus(header)] header: Header<'_>,
+        ) -> fdo::Result<u32> {
             let _ = (handle, app_id, window);
+            let creator = self.guard.admit(&header).await?;
             let session = session_handle.to_string();
             if self.hub.lock().await.add_monitor(&session) != MonitorAdded::New {
-                return 2;
+                return Ok(2);
             }
             let object = MonitorObject {
                 hub: Arc::clone(&self.hub),
                 session: session.clone(),
+                creator,
+                guard: self.guard.clone(),
             };
             if let Err(error) = server.at(session_handle.as_str(), object).await {
                 tracing::warn!(%error, "the monitor object could not be exported");
                 self.hub.lock().await.remove_monitor(&session);
-                return 2;
+                return Ok(2);
             }
             if let Err(error) =
                 Self::state_changed(&emitter, session_handle.clone(), initial_state()).await
             {
                 tracing::warn!(%error, "the first state could not be sent");
             }
-            0
+            Ok(0)
         }
 
         /// An app answered the end-of-session query.
-        async fn query_end_response(&self, session_handle: ObjectPath<'_>) {
+        async fn query_end_response(
+            &self,
+            session_handle: ObjectPath<'_>,
+            #[zbus(object_server)] server: &ObjectServer,
+            #[zbus(header)] header: Header<'_>,
+        ) -> fdo::Result<()> {
+            // The monitor's object knows who started it; with no such object only the frontend check
+            // applies, and the answer is then for a session that is not monitored.
+            let started_by = match server
+                .interface::<_, MonitorObject>(session_handle.as_str())
+                .await
+            {
+                Ok(monitor) => {
+                    let creator = monitor.get().await.creator.clone();
+                    Some(creator)
+                }
+                Err(_) => None,
+            };
+            match started_by {
+                Some(creator) => self.guard.admit_creator(&header, &creator).await?,
+                None => {
+                    self.guard.admit(&header).await?;
+                }
+            }
             let known = self.hub.lock().await.note_answer(session_handle.as_str());
             if known == MonitorKnown::Unknown {
                 tracing::debug!("an answer for a session that is not monitored");
             }
+            Ok(())
         }
 
         /// The session state changed (`screensaver-active`, `session-state`).

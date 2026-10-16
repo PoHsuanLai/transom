@@ -11,10 +11,12 @@ use std::sync::{Mutex, PoisonError};
 use zbus::zvariant::ObjectPath;
 
 use crate::BoxFuture;
-use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
+use crate::chooser::ChooserError;
 use crate::link::BusLink;
 use crate::names::{AppNames, Layout, tidy_to};
+use crate::peers::FrontendOnly;
 use crate::screencast::Dict;
+use crate::shell::{Door, answered};
 
 /// The button that says yes, when the app's request names none.
 const GRANT_LABEL: &str = "Allow";
@@ -68,8 +70,8 @@ impl Answer {
 pub fn response_of(asked: &Result<Answer, ChooserError>) -> u32 {
     match asked {
         Ok(answer) => answer.response(),
-        Err(ChooserError::Unavailable) => {
-            tracing::warn!("no shell is available to ask, so the answer is no");
+        Err(error) if error.is_refusal() => {
+            tracing::warn!(%error, "the shell could not be asked, so the answer is no");
             RESPONSE_DENIED
         }
         Err(error) => {
@@ -164,23 +166,20 @@ impl ShellAsker {
 impl Asker for ShellAsker {
     fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
         Box::pin(async move {
-            let connection = self.link.connection()?;
-            let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
-            let asked = proxy
-                .ask_permission(
+            let Door { shell, mut watch } = Door::open(&self.link).await?;
+            let value = answered(
+                &mut watch,
+                shell.ask_permission(
                     &question.app_label,
                     &question.title,
                     &question.subtitle,
                     &question.body,
                     &question.grant_label,
                     &question.deny_label,
-                )
-                .await;
-            match asked {
-                Ok(value) => Answer::from_wire(value).ok_or(ChooserError::BadAnswer),
-                Err(error) if nobody_answers(&error) => Err(ChooserError::Unavailable),
-                Err(error) => Err(call_failed(error)),
-            }
+                ),
+            )
+            .await?;
+            Answer::from_wire(value).ok_or(ChooserError::BadAnswer)
         })
     }
 }
@@ -245,6 +244,7 @@ impl Asker for FakeAsker {
 pub struct AccessService {
     asker: Box<dyn Asker>,
     names: AppNames,
+    guard: FrontendOnly,
 }
 
 impl AccessService {
@@ -254,7 +254,14 @@ impl AccessService {
         Self {
             asker,
             names: AppNames::none(),
+            guard: FrontendOnly::default(),
         }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// This service showing apps by the names `names` finds.
@@ -283,11 +290,13 @@ impl AccessService {
         subtitle: &str,
         body: &str,
         options: Dict,
-    ) -> (u32, Dict) {
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<(u32, Dict)> {
         let _ = (handle, parent_window);
+        self.guard.admit(&header).await?;
         let question =
             Question::from_call(&self.names.label(app_id), title, subtitle, body, &options);
-        self.decide(&question).await
+        Ok(self.decide(&question).await)
     }
 
     /// The interface version.

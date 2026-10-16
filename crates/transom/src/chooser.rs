@@ -10,6 +10,7 @@ use transom_core::{CastSource, Choice, ChoiceRequest, CursorMode, Multiple};
 
 use crate::BoxFuture;
 use crate::link::BusLink;
+use crate::shell::{Door, answered};
 
 /// Why the person could not be asked.
 #[derive(Debug, thiserror::Error)]
@@ -18,12 +19,30 @@ pub enum ChooserError {
     /// The shell is not on the bus, so there is nobody to ask. Sharing is refused.
     #[error("no picker is available")]
     Unavailable,
+    /// Whoever owns the shell's name is not the shell, or could not be confirmed to be. Nobody
+    /// was asked, so nobody said yes.
+    #[error("the shell could not be confirmed")]
+    NotTheShell,
+    /// The shell's name changed hands while the person was being asked. The question ends unanswered.
+    #[error("the shell changed while it was being asked")]
+    ShellChanged,
     /// The shell answered with something that does not make sense.
     #[error("the picker's answer was not understood")]
     BadAnswer,
     /// The call failed.
     #[error("the picker call failed: {0}")]
     Call(String),
+}
+
+impl ChooserError {
+    /// Whether the person was never really asked: no shell to ask, not the shell, or the shell
+    /// replaced mid-question. Each of these is a no, never a yes.
+    pub fn is_refusal(&self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable | Self::NotTheShell | Self::ShellChanged
+        )
+    }
 }
 
 /// The seam: show the picker and return what was picked, or `None` if the person cancelled.
@@ -103,22 +122,19 @@ impl Chooser for ShellChooser {
         request: &'a ChoiceRequest,
     ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>> {
         Box::pin(async move {
-            let connection = self.link.connection()?;
-            let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
+            let Door { shell, mut watch } = Door::open(&self.link).await?;
             let cursor_modes = request.cursor_modes.iter().map(|m| m.to_wire()).collect();
-            let asked = proxy
-                .pick_capture_source(
+            let (sources, cursor) = answered(
+                &mut watch,
+                shell.pick_capture_source(
                     &request.app_label,
                     request.kinds.to_wire(),
                     multiple_to_wire(request.multiple),
                     cursor_modes,
-                )
-                .await;
-            match asked {
-                Ok((sources, cursor)) => answer_from_wire(&sources, cursor),
-                Err(error) if nobody_answers(&error) => Err(ChooserError::Unavailable),
-                Err(error) => Err(call_failed(error)),
-            }
+                ),
+            )
+            .await?;
+            answer_from_wire(&sources, cursor)
         })
     }
 }
@@ -161,14 +177,14 @@ pub fn nobody_answers(error: &zbus::Error) -> bool {
 }
 
 /// What a missing picker means for sharing: nobody was asked, so nobody said yes. An answer that
-/// could not be had because there is nobody to ask becomes a cancel, which shares nothing and
+/// could not be had because there is nobody to ask (see [`ChooserError::is_refusal`]) becomes a cancel, which shares nothing and
 /// is the portal's plain "the person said no". Any other failure is still a failure.
 pub fn unavailable_is_cancel(
     answer: Result<Option<Choice>, ChooserError>,
 ) -> Result<Option<Choice>, ChooserError> {
     match answer {
-        Err(ChooserError::Unavailable) => {
-            tracing::warn!("no picker is available, so nothing is shared");
+        Err(error) if error.is_refusal() => {
+            tracing::warn!(%error, "no picker could be asked, so nothing is shared");
             Ok(None)
         }
         other => other,

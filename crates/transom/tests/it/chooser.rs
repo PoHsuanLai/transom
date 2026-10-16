@@ -93,10 +93,13 @@ fn a_shell_that_cannot_answer_is_a_cancel_and_other_failures_stay_failures() {
     ] {
         assert_eq!(nobody_answers(&error), nobody, "{error}");
     }
-    assert!(matches!(
-        unavailable_is_cancel(Err(ChooserError::Unavailable)),
-        Ok(None)
-    ));
+    for refusal in [
+        ChooserError::Unavailable,
+        ChooserError::NotTheShell,
+        ChooserError::ShellChanged,
+    ] {
+        assert!(matches!(unavailable_is_cancel(Err(refusal)), Ok(None)));
+    }
     for failure in [ChooserError::BadAnswer, ChooserError::Call("x".into())] {
         assert!(unavailable_is_cancel(Err(failure)).is_err());
     }
@@ -105,11 +108,17 @@ fn a_shell_that_cannot_answer_is_a_cancel_and_other_failures_stay_failures() {
 
 #[test]
 fn what_asking_came_to_is_the_portals_response_code() {
-    let cases: [(&str, Result<Answer, ChooserError>, u32); 6] = [
+    let cases: [(&str, Result<Answer, ChooserError>, u32); 8] = [
         ("granted", Ok(Answer::Granted), 0),
         ("denied", Ok(Answer::Denied), 1),
         ("dismissed is cancelled", Ok(Answer::Dismissed), 1),
         ("no shell is a no", Err(ChooserError::Unavailable), 1),
+        ("not the shell is a no", Err(ChooserError::NotTheShell), 1),
+        (
+            "a replaced shell is a no",
+            Err(ChooserError::ShellChanged),
+            1,
+        ),
         ("a bad answer ends it", Err(ChooserError::BadAnswer), 2),
         (
             "a failed call ends it",

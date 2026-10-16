@@ -7,11 +7,12 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use transom_core::{Rgb, SettingValue};
+use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use super::{ScreenshotSetup, file_uri, take};
 use crate::access::{Question, response_of};
-use crate::chooser::ChooserError;
+use crate::peers::FrontendOnly;
 use crate::screencast::Dict;
 use crate::settings::wire_value;
 
@@ -80,6 +81,8 @@ pub struct ScreenshotService {
     /// One permit: one screenshot is being taken at a time. A picture is held in memory several
     /// times over while it is made, and a caller must not be able to start many at once.
     one_at_a_time: Arc<Semaphore>,
+    /// Lets only the portal frontend call.
+    guard: FrontendOnly,
 }
 
 impl Default for ScreenshotService {
@@ -100,7 +103,14 @@ impl ScreenshotService {
             setup: Arc::new(setup),
             seq: AtomicU32::new(0),
             one_at_a_time: Arc::new(Semaphore::new(1)),
+            guard: FrontendOnly::default(),
         }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// Answer a `Screenshot` call: ask the person first unless the frontend already did (see
@@ -168,9 +178,11 @@ impl ScreenshotService {
         app_id: &str,
         parent_window: &str,
         options: Dict,
-    ) -> (u32, Dict) {
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<(u32, Dict)> {
         let _ = (handle, parent_window);
-        self.shoot(app_id, &options).await
+        self.guard.admit(&header).await?;
+        Ok(self.shoot(app_id, &options).await)
     }
 
     /// Let the person pick a colour from the screen; the reply's `color` is `(ddd)`. The shell
@@ -181,32 +193,36 @@ impl ScreenshotService {
         app_id: &str,
         parent_window: &str,
         options: Dict,
-    ) -> (u32, Dict) {
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<(u32, Dict)> {
         let _ = (handle, parent_window, options);
-        match self
-            .setup
-            .picker
-            .pick(&self.setup.names.label(app_id))
-            .await
-        {
-            Ok(Some(color)) => match wire_color(color) {
-                Some(value) => {
-                    let mut results = Dict::new();
-                    results.insert("color".to_owned(), value);
-                    (RESPONSE_OK, results)
+        self.guard.admit(&header).await?;
+        Ok(
+            match self
+                .setup
+                .picker
+                .pick(&self.setup.names.label(app_id))
+                .await
+            {
+                Ok(Some(color)) => match wire_color(color) {
+                    Some(value) => {
+                        let mut results = Dict::new();
+                        results.insert("color".to_owned(), value);
+                        (RESPONSE_OK, results)
+                    }
+                    None => (RESPONSE_FAILED, Dict::new()),
+                },
+                Ok(None) => (RESPONSE_CANCELLED, Dict::new()),
+                Err(error) if error.is_refusal() => {
+                    tracing::warn!(%error, "no colour picker could be asked");
+                    (RESPONSE_CANCELLED, Dict::new())
                 }
-                None => (RESPONSE_FAILED, Dict::new()),
+                Err(error) => {
+                    tracing::warn!(%error, "the colour picker failed");
+                    (RESPONSE_FAILED, Dict::new())
+                }
             },
-            Ok(None) => (RESPONSE_CANCELLED, Dict::new()),
-            Err(ChooserError::Unavailable) => {
-                tracing::warn!("no colour picker is available");
-                (RESPONSE_CANCELLED, Dict::new())
-            }
-            Err(error) => {
-                tracing::warn!(%error, "the colour picker failed");
-                (RESPONSE_FAILED, Dict::new())
-            }
-        }
+        )
     }
 
     /// The screenshot targets offered: the whole screen.

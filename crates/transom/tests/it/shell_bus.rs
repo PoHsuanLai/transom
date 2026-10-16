@@ -1,7 +1,9 @@
 //! The portal's questions to the shell, on a private bus: transom's real clients against a
 //! stand-in shell that applies the owner check the real shell applies (a question is answered only
 //! when its sender is the connection that owns the portal's name). Each side's own tests were green
-//! while the pair was broken, because the client asked from a second connection of its own.
+//! while the pair was broken, because the client asked from a second connection of its own. The
+//! stand-in is introduced as the shell, as the caller table would name it (`guard.rs` covers the
+//! shell that is not the shell).
 
 use std::time::Duration;
 
@@ -104,19 +106,25 @@ async fn the_portal_asks_the_shell_from_the_connection_that_owns_its_name() {
     let Some(bus) = PrivateBus::start() else {
         return;
     };
-    let _shell = shell_on(&bus).await;
+    let shell = shell_on(&bus).await;
     let scratch = tempfile::tempdir().expect("scratch");
     let parts = Parts::real(
         FileStore::new(scratch.path().join("restore")),
         DesktopAppearance::new(),
     );
     let link = parts.link();
+    let parts_link = parts.link();
     let chooser = ShellChooser::new(link.clone());
     let asker = ShellAsker::new(link.clone());
     let picker = ShellColorPicker::new(link);
     let _portal = serve_on(bus.builder(), parts)
         .await
         .expect("the portal serves");
+
+    let peers = parts_link
+        .peers()
+        .expect("served portals can tell callers apart");
+    crate::guard::as_shell(&peers, &shell);
 
     // The control: a connection of its own is a stranger to the shell's rule, so the rule is
     // live. Without this, the answers below would prove nothing.

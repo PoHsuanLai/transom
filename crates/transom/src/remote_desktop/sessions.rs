@@ -8,7 +8,7 @@ use std::time::Instant;
 use super::book::{Book, Entry, Socket, Stage};
 use super::devices::DeviceKinds;
 use super::eis::{EisError, EisHandout};
-use crate::peers::Tether;
+use crate::peers::{Creator, Tether};
 use crate::screencast::session::{Refusal, SessionKey};
 
 /// Why a `ConnectToEIS` was refused.
@@ -84,6 +84,11 @@ impl Core {
         tether: Tether,
     ) -> Result<Vec<SessionKey>, Refusal> {
         self.lock().open(key, app_id, tether, Instant::now())
+    }
+
+    /// The peer that opened the session `key`, if it is open.
+    pub fn creator(&self, key: &SessionKey) -> Option<Creator> {
+        self.lock().entries.get(key).map(|e| e.tether.creator())
     }
 
     /// Ends every session hung on `peer`, taking back the sockets handed out; the handles ended.

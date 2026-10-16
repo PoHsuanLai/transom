@@ -5,8 +5,9 @@ use std::sync::Mutex;
 use transom_core::Rgb;
 
 use crate::BoxFuture;
-use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
+use crate::chooser::ChooserError;
 use crate::link::BusLink;
+use crate::shell::{Door, answered};
 
 /// The seam: show the colour picker and return the colour, or `None` if the person cancelled.
 pub trait ColorPicker: Send + Sync + std::fmt::Debug {
@@ -32,13 +33,9 @@ impl ShellColorPicker {
 impl ColorPicker for ShellColorPicker {
     fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
         Box::pin(async move {
-            let connection = self.link.connection()?;
-            let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
-            match proxy.pick_color(app_label).await {
-                Ok(picked) => color_from_wire(&picked),
-                Err(error) if nobody_answers(&error) => Err(ChooserError::Unavailable),
-                Err(error) => Err(call_failed(error)),
-            }
+            let Door { shell, mut watch } = Door::open(&self.link).await?;
+            let picked = answered(&mut watch, shell.pick_color(app_label)).await?;
+            color_from_wire(&picked)
         })
     }
 }

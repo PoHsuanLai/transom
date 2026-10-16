@@ -14,6 +14,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedValue, StructureBuilder, Value};
 
 use crate::fsread::read_text;
+use crate::peers::FrontendOnly;
 use crate::{PORTAL_PATH, TransomError};
 
 /// The largest appearance document that is read. The real one is a few hundred bytes.
@@ -160,6 +161,13 @@ pub enum PortalError {
     NotFound(String),
     /// The appearance could not be read (`org.freedesktop.portal.Error.Failed`).
     Failed(String),
+    /// The caller is not the portal frontend (`org.freedesktop.portal.Error.NotAllowed`).
+    NotAllowed(String),
+}
+
+/// The reply for a caller the guard refused.
+fn refused(error: zbus::fdo::Error) -> PortalError {
+    PortalError::NotAllowed(error.to_string())
 }
 
 /// A setting as the bus carries it: `U32` is `u`, `Rgb` is `(ddd)`.
@@ -216,6 +224,8 @@ pub struct SettingsService {
     /// Held by a read of the document until it really ends, so a read that outlasts its deadline
     /// is not followed by another on a second thread.
     reading: Arc<tokio::sync::Mutex<()>>,
+    /// Lets only the portal frontend call.
+    guard: FrontendOnly,
 }
 
 impl SettingsService {
@@ -225,7 +235,14 @@ impl SettingsService {
             source: Arc::from(appearance),
             last: Mutex::new(None),
             reading: Arc::default(),
+            guard: FrontendOnly::default(),
         }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// Read the document on a blocking thread, for at most [`READ_DEADLINE`].
@@ -330,7 +347,12 @@ mod interface {
     #[zbus::interface(name = "org.freedesktop.impl.portal.Settings")]
     impl SettingsService {
         /// Every setting in the namespaces the patterns select (none: all).
-        async fn read_all(&self, namespaces: Vec<String>) -> Result<Namespaces, PortalError> {
+        async fn read_all(
+            &self,
+            namespaces: Vec<String>,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+        ) -> Result<Namespaces, PortalError> {
+            self.guard.admit(&header).await.map_err(refused)?;
             let appearance = self
                 .snapshot()
                 .await
@@ -339,7 +361,13 @@ mod interface {
         }
 
         /// One setting; an unknown one is a `org.freedesktop.portal.Error.NotFound`.
-        async fn read(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
+        async fn read(
+            &self,
+            namespace: &str,
+            key: &str,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+        ) -> Result<OwnedValue, PortalError> {
+            self.guard.admit(&header).await.map_err(refused)?;
             let appearance = self
                 .snapshot()
                 .await

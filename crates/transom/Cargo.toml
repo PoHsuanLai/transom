@@ -19,6 +19,7 @@ path = "src/main.rs"
 transom-core = { workspace = true }
 thiserror = { workspace = true }
 zbus = { workspace = true }
+peephole-bus = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -30,6 +31,8 @@ pipewire = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
+# `introduce` makes a test's connection stand as the frontend or the shell without looking at it.
+peephole-bus = { workspace = true, features = ["fake"] }
 tempfile = { workspace = true }
 
 [lints]

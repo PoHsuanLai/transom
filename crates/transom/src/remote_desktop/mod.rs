@@ -18,12 +18,14 @@ mod book;
 pub mod consent;
 mod devices;
 pub mod eis;
+mod object;
 mod sessions;
 
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
 use zbus::fdo;
+use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 pub use self::consent::{
@@ -32,10 +34,11 @@ pub use self::consent::{
 use self::devices::DEVICE_TYPES;
 pub use self::devices::DeviceKinds;
 pub use self::eis::{CasementEis, EisError, EisHandout, FakeEis};
+use self::object::SessionObject;
 pub use self::sessions::ConnectError;
 use self::sessions::{Core, Settled, Verdict};
 use crate::names::AppNames;
-use crate::peers::Tether;
+use crate::peers::{FrontendOnly, Tether};
 use crate::screencast::Dict;
 use crate::screencast::session::{Refusal, SessionKey};
 
@@ -53,6 +56,7 @@ pub struct RemoteDesktopService {
     core: Arc<Core>,
     consent: Box<dyn Consent>,
     names: AppNames,
+    guard: FrontendOnly,
 }
 
 impl RemoteDesktopService {
@@ -63,6 +67,22 @@ impl RemoteDesktopService {
             core: Arc::new(Core::new(eis)),
             consent,
             names: AppNames::none(),
+            guard: FrontendOnly::default(),
+        }
+    }
+
+    /// This service letting through the callers `guard` admits. Without it, no wire call passes.
+    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+        self.guard = guard;
+        self
+    }
+
+    /// Let the call with `header` through if it is from the portal frontend and, when the session
+    /// `key` is open, from the peer that opened it.
+    async fn admit_for(&self, header: &Header<'_>, key: &SessionKey) -> fdo::Result<()> {
+        match self.core.creator(key) {
+            Some(creator) => self.guard.admit_creator(header, &creator).await,
+            None => self.guard.admit(header).await.map(|_| ()),
         }
     }
 
@@ -174,12 +194,21 @@ impl RemoteDesktopService {
         self.len() == 0
     }
 
-    /// The `Notify*` methods are not a way in: input comes only through the EIS socket.
-    fn dropped(&self, method: &str) {
+    /// The `Notify*` methods are not a way in: input comes only through the EIS socket. A call
+    /// is still refused unless it is from the peer that opened the session.
+    async fn dropped(
+        &self,
+        method: &str,
+        session: &ObjectPath<'_>,
+        header: &Header<'_>,
+    ) -> fdo::Result<()> {
+        self.admit_for(header, &SessionKey(session.to_string()))
+            .await?;
         tracing::debug!(
             method,
             "remote input sent outside the EIS socket was dropped"
         );
+        Ok(())
     }
 }
 
@@ -203,28 +232,6 @@ impl From<ConnectError> for fdo::Error {
     }
 }
 
-/// The backend's end of a session, at the session handle: the frontend calls `Close` on it.
-#[derive(Debug)]
-struct SessionObject {
-    core: Arc<Core>,
-    key: SessionKey,
-}
-
-#[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
-impl SessionObject {
-    /// End the session and take its input socket back.
-    async fn close(&self, #[zbus(object_server)] server: &zbus::ObjectServer) {
-        self.core.close(&self.key).await;
-        let _ = server.remove::<SessionObject, _>(self.key.0.as_str()).await;
-    }
-
-    /// The interface version.
-    #[zbus(property, name = "version")]
-    fn version(&self) -> u32 {
-        1
-    }
-}
-
 #[zbus::interface(name = "org.freedesktop.impl.portal.RemoteDesktop")]
 impl RemoteDesktopService {
     /// Open a session.
@@ -236,10 +243,11 @@ impl RemoteDesktopService {
         app_id: &str,
         options: Dict,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-    ) -> Reply {
+    ) -> fdo::Result<Reply> {
         let _ = (handle, options);
+        self.guard.admit(&header).await?;
         let key = SessionKey(session_handle.to_string());
         let tether = Tether::of(connection, &header).await;
         let reply = match self.create_for(key.clone(), app_id, tether) {
@@ -252,19 +260,17 @@ impl RemoteDesktopService {
             Err(_) => failed(),
         };
         if reply.0 == GRANTED {
-            let object = SessionObject {
-                core: Arc::clone(&self.core),
-                key: key.clone(),
-            };
+            let object =
+                SessionObject::new(Arc::clone(&self.core), key.clone(), self.guard.clone());
             // `Ok(false)`: another portal interface already serves this handle's session object,
             // which a combined session expects. A real failure leaves a session nobody can close.
             if let Err(error) = server.at(session_handle, object).await {
                 tracing::warn!(%error, "the session object could not be served");
                 self.close(&key).await;
-                return failed();
+                return Ok(failed());
             }
         }
-        reply
+        Ok(reply)
     }
 
     /// Record which device kinds the app wants.
@@ -274,9 +280,12 @@ impl RemoteDesktopService {
         session_handle: ObjectPath<'_>,
         app_id: &str,
         options: Dict,
-    ) -> Reply {
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<Reply> {
         let _ = (handle, app_id);
-        self.select(&SessionKey(session_handle.to_string()), &options)
+        let key = SessionKey(session_handle.to_string());
+        self.admit_for(&header, &key).await?;
+        Ok(self.select(&key, &options))
     }
 
     /// Ask the person to allow it.
@@ -287,9 +296,12 @@ impl RemoteDesktopService {
         app_id: &str,
         parent_window: &str,
         options: Dict,
-    ) -> Reply {
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<Reply> {
         let _ = (handle, app_id, parent_window, options);
-        self.begin(&SessionKey(session_handle.to_string())).await
+        let key = SessionKey(session_handle.to_string());
+        self.admit_for(&header, &key).await?;
+        Ok(self.begin(&key).await)
     }
 
     /// Relative pointer motion.
@@ -299,9 +311,11 @@ impl RemoteDesktopService {
         options: Dict,
         dx: f64,
         dy: f64,
-    ) {
-        let _ = (session_handle, options, dx, dy);
-        self.dropped("NotifyPointerMotion");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, dx, dy);
+        self.dropped("NotifyPointerMotion", &session_handle, &header)
+            .await
     }
 
     /// Pointer motion to a position in a stream.
@@ -312,9 +326,11 @@ impl RemoteDesktopService {
         stream: u32,
         x: f64,
         y: f64,
-    ) {
-        let _ = (session_handle, options, stream, x, y);
-        self.dropped("NotifyPointerMotionAbsolute");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, stream, x, y);
+        self.dropped("NotifyPointerMotionAbsolute", &session_handle, &header)
+            .await
     }
 
     /// A pointer button.
@@ -324,9 +340,11 @@ impl RemoteDesktopService {
         options: Dict,
         button: i32,
         state: u32,
-    ) {
-        let _ = (session_handle, options, button, state);
-        self.dropped("NotifyPointerButton");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, button, state);
+        self.dropped("NotifyPointerButton", &session_handle, &header)
+            .await
     }
 
     /// Smooth scrolling.
@@ -336,9 +354,11 @@ impl RemoteDesktopService {
         options: Dict,
         dx: f64,
         dy: f64,
-    ) {
-        let _ = (session_handle, options, dx, dy);
-        self.dropped("NotifyPointerAxis");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, dx, dy);
+        self.dropped("NotifyPointerAxis", &session_handle, &header)
+            .await
     }
 
     /// Wheel clicks.
@@ -348,9 +368,11 @@ impl RemoteDesktopService {
         options: Dict,
         axis: u32,
         steps: i32,
-    ) {
-        let _ = (session_handle, options, axis, steps);
-        self.dropped("NotifyPointerAxisDiscrete");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, axis, steps);
+        self.dropped("NotifyPointerAxisDiscrete", &session_handle, &header)
+            .await
     }
 
     /// A key by its evdev code.
@@ -360,9 +382,11 @@ impl RemoteDesktopService {
         options: Dict,
         keycode: i32,
         state: u32,
-    ) {
-        let _ = (session_handle, options, keycode, state);
-        self.dropped("NotifyKeyboardKeycode");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, keycode, state);
+        self.dropped("NotifyKeyboardKeycode", &session_handle, &header)
+            .await
     }
 
     /// A key by its keysym.
@@ -372,12 +396,15 @@ impl RemoteDesktopService {
         options: Dict,
         keysym: i32,
         state: u32,
-    ) {
-        let _ = (session_handle, options, keysym, state);
-        self.dropped("NotifyKeyboardKeysym");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, keysym, state);
+        self.dropped("NotifyKeyboardKeysym", &session_handle, &header)
+            .await
     }
 
     /// A touch begins.
+    #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
     async fn notify_touch_down(
         &self,
         session_handle: ObjectPath<'_>,
@@ -386,12 +413,15 @@ impl RemoteDesktopService {
         slot: u32,
         x: f64,
         y: f64,
-    ) {
-        let _ = (session_handle, options, stream, slot, x, y);
-        self.dropped("NotifyTouchDown");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, stream, slot, x, y);
+        self.dropped("NotifyTouchDown", &session_handle, &header)
+            .await
     }
 
     /// A touch moves.
+    #[allow(clippy::too_many_arguments)] // the portal's own signature plus the bus context
     async fn notify_touch_motion(
         &self,
         session_handle: ObjectPath<'_>,
@@ -400,15 +430,24 @@ impl RemoteDesktopService {
         slot: u32,
         x: f64,
         y: f64,
-    ) {
-        let _ = (session_handle, options, stream, slot, x, y);
-        self.dropped("NotifyTouchMotion");
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, stream, slot, x, y);
+        self.dropped("NotifyTouchMotion", &session_handle, &header)
+            .await
     }
 
     /// A touch ends.
-    async fn notify_touch_up(&self, session_handle: ObjectPath<'_>, options: Dict, slot: u32) {
-        let _ = (session_handle, options, slot);
-        self.dropped("NotifyTouchUp");
+    async fn notify_touch_up(
+        &self,
+        session_handle: ObjectPath<'_>,
+        options: Dict,
+        slot: u32,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        let _ = (options, slot);
+        self.dropped("NotifyTouchUp", &session_handle, &header)
+            .await
     }
 
     /// Hand the app its EIS socket for this session (one per session).
@@ -417,11 +456,12 @@ impl RemoteDesktopService {
         session_handle: ObjectPath<'_>,
         app_id: &str,
         options: Dict,
+        #[zbus(header)] header: Header<'_>,
     ) -> fdo::Result<zbus::zvariant::OwnedFd> {
         let _ = (app_id, options);
-        let fd = self
-            .connect(&SessionKey(session_handle.to_string()))
-            .await?;
+        let key = SessionKey(session_handle.to_string());
+        self.admit_for(&header, &key).await?;
+        let fd = self.connect(&key).await?;
         Ok(zbus::zvariant::OwnedFd::from(fd))
     }
 

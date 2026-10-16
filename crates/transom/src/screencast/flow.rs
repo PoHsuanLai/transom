@@ -21,7 +21,7 @@ use super::{Dict, SessionObject};
 use crate::capture::{self, DisplayName};
 use crate::chooser::{Chooser, unavailable_is_cancel};
 use crate::names::AppNames;
-use crate::peers::Tether;
+use crate::peers::{Creator, Tether};
 
 /// The answer to a Start call, before it becomes wire values.
 #[derive(Debug)]
@@ -87,6 +87,11 @@ impl Shared {
         tether: Tether,
     ) -> Result<Vec<SessionKey>, Refusal> {
         held(&self.sessions).create(key.clone(), app_id, tether, Instant::now())
+    }
+
+    /// The peer that opened the session `key`, if it is open.
+    pub fn creator(&self, key: &SessionKey) -> Option<Creator> {
+        held(&self.sessions).get(key).map(|e| e.tether.creator())
     }
 
     /// End every session hung on `peer`, stopping its streams; the handles ended.

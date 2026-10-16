@@ -23,9 +23,9 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 
 ```
 crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, pacing, settings_values}.rs
-crates/transom/src/{lib, main, error, link, peers, names, fsread, random, chooser, screenshot, settings, access}.rs
+crates/transom/src/{lib, main, error, link, peers, shell, names, fsread, random, chooser, screenshot, settings, access}.rs
                    screenshot/{layout, color, service}.rs
-                   remote_desktop/{mod, book, sessions, consent, eis, devices}.rs
+                   remote_desktop/{mod, book, sessions, object, consent, eis, devices}.rs
                    inhibit/{mod, hub, effect}.rs
                    screencast/{mod, flow, options, run, session, stream, pipewire, pixels, restore}.rs
                    capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/{outputs, wait}.rs
@@ -45,7 +45,7 @@ scripts/check-boundary.sh
 | `screenshot::OutputLayout` | `LiveLayout` (asks the compositor at each screenshot) | `FixedLayout` | transom-shot |
 | `screenshot::ColorPicker` | `ShellColorPicker` (`org.quire.Shell1.PickColor`) | `FakeColorPicker` | transom-shot |
 | `chooser::Chooser` | `ShellChooser` (calls the shell's picker) | `FakeChooser` | P2-T2 (chooser client) |
-| `link::BusLink` | the connection that owns the portal's name, attached by `serve` | (none: tests use `serve_on` on a private bus) | PORTAL-01 |
+| `link::BusLink` | the connection that owns the portal's name and the `peers::Peers` that tell callers apart, both attached by `serve` | (none: tests use `serve_on` on a private bus and `Peers::introduce`) | PORTAL-01, 03, 10 |
 | `settings::AppearanceSource` | `DesktopAppearance` | `FixedAppearance` | P2-T1 |
 | `access::Asker` | `ShellAsker` (`org.quire.Shell1.AskPermission`) | `FakeAsker` | transom-access |
 | `remote_desktop::Consent` | `ShellConsent` (its own `AskPermission` question naming the input) | `FakeConsent` | P2-T3 |
@@ -75,6 +75,36 @@ Every question to the shell or the compositor goes out on the one connection tha
 claimed). The shell answers only the owner of that name, and a second connection has another
 unique name. `tests/it/shell_bus.rs` pairs the real clients with a stand-in shell that applies the
 shell's owner check, on a private bus.
+
+## 3b-2. Who may call, and whom the portal asks (PORTAL-03, PORTAL-10)
+
+Caller identity is `peephole-bus` (git, tag v0.1.0, feature `tokio` and `desktop`); `serve` builds one
+`peers::Peers` on the name-owning connection from the root-owned caller table
+(`/etc/quire/desktop-callers.toml`, loaded by `main.rs`; a table that cannot be loaded is empty, so nobody is
+recognised, every call is refused and the shell is never asked).
+
+- **Inbound.** Every method of every `org.freedesktop.impl.portal.*` interface (Screenshot, ScreenCast,
+  RemoteDesktop with its `Notify*` and `ConnectToEIS`, Access, Inhibit, Settings, and the `Session` and `Request`
+  objects) starts with `peers::FrontendOnly::admit`: the sender must hold role `portal_frontend`, proved `Full`
+  (image and unit as the unit manager states it). The refusal is `AccessDenied` (Settings: the portal's
+  `NotAllowed`). Before `serve` has attached the means of telling callers apart, nobody passes. Properties
+  (`version`, `AvailableSourceTypes`, ...) are answered by zbus without a guard; they carry no state.
+- **Creator.** A session or request remembers the sender that opened it (`peers::Creator`: the `Tether`'s caller for
+  screen-cast and remote-control sessions, a field of the object for Inhibit requests and monitors). Every later
+  call about it (`Select*`, `Start`, `ConnectToEIS`, `Notify*`, `QueryEndResponse`, `Close`) must come from that
+  same peer (`FrontendOnly::admit_creator`). A call about a session that is not open gets only the frontend check
+  and then the old answer (response 2), so a refusal says nothing about which handles exist.
+- **Outbound.** `shell::Door::open` runs once per question: subscribe to changes of the owner of `org.quire.Shell`,
+  require that the owner holds role `shell`, proved `Full`, and address the question to that owner's unique name.
+  Nothing is cached, so a shell restart is seen by the next question. `shell::answered` ends a question that is open
+  when the name changes hands (`ChooserError::ShellChanged`). A name nobody owns, an owner that is not the shell and a
+  bus that does not answer are `ChooserError::NotTheShell`. `ChooserError::is_refusal` groups these with
+  `Unavailable`: the picker is a cancel, a sheet is a no, remote control grants nothing. Picker, sheets and colour
+  picker all go through `Door`.
+- Tests: `tests/it/guard.rs` (each method refuses a stranger, the shell and a frontend proved only by image; sessions
+  and monitors are closed and changed only by their opener) and `tests/it/shell_check.rs` (a squatter is never asked,
+  the owner is looked up again after a restart, a question open when the shell changes ends as a no), on a private
+  bus with `Peers::introduce`; nothing reads `/proc`.
 
 ## 3c. Lifetimes and limits
 

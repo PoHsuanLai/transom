@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use peephole_bus::peephole::{RealProc, TableFiles};
+use peephole_bus::peephole_core::Table;
 use transom::access::ShellAsker;
 use transom::capture::DisplayName;
 use transom::link::BusLink;
@@ -21,7 +23,8 @@ async fn main() -> ExitCode {
         FileStore::new(state_file()),
         DesktopAppearance::at(appearance_file()),
     )
-    .with_names(app_names());
+    .with_names(app_names())
+    .with_callers(caller_table());
     let parts = {
         let setup = screenshots(parts.link());
         parts.with_screenshots(setup)
@@ -36,6 +39,18 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The root-owned table that says which program is the portal frontend and which is the shell. When
+/// it cannot be loaded (missing, or writable by someone other than root) the table is empty: nobody
+/// is recognised, every call is refused and the shell is never asked.
+fn caller_table() -> Table {
+    TableFiles::desktop()
+        .load(&RealProc::system())
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "the table of the desktop's own programs could not be loaded, so every call is refused");
+            Table::empty()
+        })
 }
 
 /// Where restore tokens are kept: `$XDG_STATE_HOME/transom/restore`, or under `$HOME/.local/state`.

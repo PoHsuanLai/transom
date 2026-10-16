@@ -14,6 +14,11 @@
 //!
 //! [`serve`] puts the six interfaces on the session bus. Every question the portal asks goes out
 //! on the connection that owns its name ([`link::BusLink`]), because the shell answers only that one.
+//!
+//! Who may call, and whom the portal asks, is decided by [`peers`] and [`shell`]: a call to any
+//! interface is refused unless it comes from the portal frontend ([`peers::FrontendOnly`]), and a
+//! question goes only to the program the caller table names as the shell, confirmed again for
+//! every question ([`shell`]).
 
 pub mod access;
 pub mod capture;
@@ -29,6 +34,7 @@ pub mod remote_desktop;
 pub mod screencast;
 pub mod screenshot;
 pub mod settings;
+pub mod shell;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -67,6 +73,10 @@ pub struct Parts {
     /// The connection that owns the portal's name, once [`serve`] has built it. The seams that
     /// ask the shell or the compositor hold a copy.
     pub link: link::BusLink,
+    /// The table of the desktop's own programs, which says who the portal frontend and the shell
+    /// are. An empty table (the default) recognises nobody, so every call is refused and nobody is
+    /// asked.
+    pub callers: peephole_bus::peephole_core::Table,
 }
 
 impl Parts {
@@ -90,7 +100,14 @@ impl Parts {
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
             names: names::AppNames::none(),
             link,
+            callers: peephole_bus::peephole_core::Table::empty(),
         }
+    }
+
+    /// These parts recognising the programs `callers` names.
+    pub fn with_callers(mut self, callers: peephole_bus::peephole_core::Table) -> Self {
+        self.callers = callers;
+        self
     }
 
     /// These parts showing apps by the names `names` finds.
@@ -137,29 +154,45 @@ pub async fn serve_on(
         screenshots,
         names,
         link,
+        callers,
     } = parts;
+    let guard = peers::FrontendOnly::new(link.clone());
     let connection = builder
         .serve_at(
             PORTAL_PATH,
-            screenshot::ScreenshotService::with_setup(screenshots.with_names(names.clone())),
+            screenshot::ScreenshotService::with_setup(screenshots.with_names(names.clone()))
+                .with_guard(guard.clone()),
         )?
         .serve_at(
             PORTAL_PATH,
-            screencast::ScreenCastService::new(chooser, restore).with_names(names.clone()),
+            screencast::ScreenCastService::new(chooser, restore)
+                .with_names(names.clone())
+                .with_guard(guard.clone()),
         )?
         .serve_at(
             PORTAL_PATH,
-            remote_desktop::RemoteDesktopService::new(consent, eis).with_names(names.clone()),
+            remote_desktop::RemoteDesktopService::new(consent, eis)
+                .with_names(names.clone())
+                .with_guard(guard.clone()),
         )?
-        .serve_at(PORTAL_PATH, settings::SettingsService::new(appearance))?
-        .serve_at(PORTAL_PATH, inhibit::InhibitService::new())?
         .serve_at(
             PORTAL_PATH,
-            access::AccessService::new(access).with_names(names),
+            settings::SettingsService::new(appearance).with_guard(guard.clone()),
+        )?
+        .serve_at(
+            PORTAL_PATH,
+            inhibit::InhibitService::new().with_guard(guard.clone()),
+        )?
+        .serve_at(
+            PORTAL_PATH,
+            access::AccessService::new(access)
+                .with_names(names)
+                .with_guard(guard),
         )?
         .build()
         .await?;
     link.attach(connection.clone());
+    link.identify_with(peers::peers_on(connection.clone(), callers));
     settings::spawn_watch(connection.clone());
     peers::spawn_watch(&connection).await?;
     connection.request_name(BUS_NAME).await?;
