@@ -83,7 +83,7 @@ impl Parts {
             restore: Box::new(restore),
             appearance: Box::new(appearance),
             consent: Box::new(remote_desktop::ShellConsent::new(Box::new(
-                chooser::ShellChooser::new(link.clone()),
+                access::ShellAsker::new(link.clone()),
             ))),
             eis: Box::new(remote_desktop::CasementEis::new(link.clone())),
             access: Box::new(access::ShellAsker::new(link.clone())),

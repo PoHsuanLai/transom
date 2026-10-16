@@ -78,10 +78,9 @@ Not compiled; the orchestrator gates. `remote_desktop.rs` has no `todo!()`.
   now returns `fdo::Result<h>` so a refusal is an error and not a panic.
 - **Session object.** The frontend closes a session through `org.freedesktop.impl.portal.Session.Close` at the session handle; a
   small `SessionObject` is served there (another portal interface serving the same handle is tolerated). No `Closed` signal yet.
-- **Open: consent is the sharing picker.** The shell has no "allow remote control" question, so `ShellConsent` asks
-  `PickCaptureSource` (any pick is a yes, cancel a no). A dedicated `org.quire.Shell1` method is an interface ask for sill
-  (suggested: `AskRemoteControl(app_label: s, devices: u) -> (allowed: u)`). The app's label is its app id until a name lookup
-  exists ("An app" when empty); that breaks the plain-words rule for sandboxed ids.
+- **Closed 2026-10-16 (PORTAL-04): consent is its own question.** `ShellConsent` now asks `AskPermission` (below) with
+  text naming the input kinds in plain words ("keyboard and pointer"); a screen-sharing pick is never a yes. The app is
+  shown by its desktop entry's name (PORTAL-11). No `AskRemoteControl` method is needed on the shell's side.
 - **Open: combined sessions.** An app that shares a screen and controls it in one session expects `streams` in the `Start`
   reply. `ScreenCastService` keeps its `SessionBook` private, so this service cannot reach it; today `Start` answers `devices`
   only. The orchestrator can close this after P2-T2 with a shared book (or a `streams_for(&SessionKey)` on the screencast
@@ -171,8 +170,8 @@ Not compiled; the orchestrator gates.
      (`AccessDenied` otherwise).
    - Until sill serves it, transom answers every `PickColor` as cancelled when the object is absent
      (`UnknownObject`/`UnknownMethod`), so no app breaks.
-3. **Remote control consent (from p2-t3, still open).** `AskRemoteControl(app_label: s, devices: u) -> (allowed: u)`
-   (1 yes, 0 no), same object and caller check; today transom asks `PickCaptureSource` and reads any pick as yes.
+3. **Remote control consent (from p2-t3): closed 2026-10-16.** It goes through `AskPermission` (item 4); no
+   `AskRemoteControl` is asked of the shell.
 4. **Yes-or-no question (transom-access).** The Access portal needs the person to answer through the shell. The shell
    must serve, on the same object (`/org/quire/Shell1`, interface `org.quire.Shell1`, name `org.quire.Shell`):
 
@@ -189,8 +188,10 @@ Not compiled; the orchestrator gates.
    - `answer`: 0 when the person pressed `grant_label`, 1 when they pressed `deny_label`, 2 when they dismissed the
      sheet (Escape, or it was replaced) without answering. Anything else is a bad answer and the portal call fails.
    - Caller check, as for `PickCaptureSource`: only the owner of `org.freedesktop.impl.portal.desktop.quire`.
-   - Until sill serves it, transom answers every question as denied (response 1) when the object is absent, so a
-     screenshot is refused rather than taken unasked.
+   - Until sill serves it (it does not at sill 3fecef0), transom answers every question as denied (response 1) when
+     the object is absent, so a screenshot is refused rather than taken unasked. Three things now ask it: the Access
+     portal, an `interactive` or unvouched Screenshot (PORTAL-06) and remote control (PORTAL-04). Until sill serves
+     it, remote control and those screenshots do not work; fail closed.
    - The Access portal's `icon` and `choices` options are not forwarded or answered; the reply carries no results.
    - The desktop's own `quire-portals.conf` (desktop/session) must also route
      `org.freedesktop.impl.portal.Access=quire`.
@@ -239,3 +240,60 @@ Written without a build or a run: nothing here has been compiled or tried in the
 interface (see the installed `org.freedesktop.portal.ScreenCast.xml`). `portal_client.py cast` sent and read
 `restore_data`, so it could never see a token and never offered one back. Fixed in the client; transom's backend
 side (`restore_data` and `persist_mode` in its Start results) was already right.
+
+## Production audit, area PORTAL (2026-10-16, lane pa-transom)
+
+Written without a build or a run: nothing here has been compiled. Fixed in transom: PORTAL-01, 04, 05, 06, 07, 08, 09,
+11, 12 (caps), 13 (memfd, node name), 16, 17, 18, 19, 20, 21. Fixed in latchkey: PORTAL-22 to 26.
+
+**Decisions recorded**
+
+- **Restore grants expire (PORTAL-09).** "While running": one day (the portal cannot see the app end, so the longest a
+  session of one app plausibly lasts). "Until revoked": thirty days, the interval at which macOS asks again whether an
+  app may keep recording the screen. A new grant starts a new period. At most 256 grants; the oldest go first.
+  The file format is version 2 (mode and date per line); a version 1 file is dropped without fuss (its grants had no
+  date and would expire at once).
+- **No identity, no memory (PORTAL-09).** An app with an empty app id (not sandboxed, and the frontend found no desktop
+  id for it) is never remembered and a token is never resolved for it. The frontend already passes the best identity it
+  has (the sandbox id, or the systemd scope's desktop id).
+- **Screenshot consent (PORTAL-06).** Read in xdg-desktop-portal's `desktop-portal/screenshot.c`: for an `interactive`
+  request the frontend skips its Access question, and it sets `permission_store_checked` for every request on a
+  version 2 or newer backend, interactive or not. So the flag does not vouch for consent by itself. The backend asks
+  for every `interactive` request and every request without the flag, and stays quiet only for a non-interactive
+  request the frontend vouched for (else two dialogs). Anyone who can call the backend directly can still set the flag:
+  that is PORTAL-03, not fixed here.
+- **Remote control asks through `AskPermission`**, not a new method (PORTAL-04).
+- **Sessions hang on two peers (PORTAL-07).** The caller's unique name and the frontend's at creation. A direct caller
+  is not refused (that is PORTAL-03); its sessions end with it.
+
+**Deferred, with the condition that closes each**
+
+- **PORTAL-02, 03, 10, 14, 15** (privileged globals, caller identity, the shell squatter, protocols not served): a later
+  wave, per the lane brief.
+- **PORTAL-12, reusing the read buffer.** Each frame still allocates a zeroed `Vec`; the sink keeps the `Vec` inside the
+  picture it holds, so reuse needs the sink to hand the buffer back. The size caps bound the churn. Closes with a
+  buffer pool in `PipewireSink` and `Copier::read_frame`.
+- **PORTAL-13, restricting the node's readers.** The node is still an ordinary `Video/Source`; its name is now random
+  but the graph lists it. Closes with PipeWire access permissions on the node, once the desktop's PipeWire policy
+  decides who may link to a capture node.
+- **PORTAL-19** is closed by PORTAL-08's bounded waits (a share's thread notices a closed session within a turn,
+  a quarter second, and no turn waits on the compositor longer than a deadline). Not separately cancelled.
+- **PORTAL-21, `ProtectSystem=strict`.** Not added: a user unit gets a mount namespace only where unprivileged user
+  namespaces are allowed, and Ubuntu 24.04 restricts them (owner decision 2026-10-16: no AppArmor allowance there).
+  Closes when that changes. `NoNewPrivileges`, `RestrictAddressFamilies=AF_UNIX`, `RestrictSUIDSGID`,
+  `LockPersonality` and `SystemCallArchitectures` are in `dist/transom.service`. Casement still trusts the unit name
+  `transom.service`, which a user can override with a drop-in.
+- **Request objects.** `Request.Close` is still not served for Start, so a cancelled Start leaves the sheet up
+  (PORTAL-04's extra).
+- **The jailed chain's fake shell** (`dev/`) does not apply the shell's owner check; the private-bus test
+  (`tests/it/shell_bus.rs`) does. Closes when the fake shell in `dev/lib/chain.sh` copies the check.
+- **Not testable without a compositor:** the deadlines and the size caps in `capture/wl.rs`. The jailed chain's
+  `dev/accept/screencast-*.sh` and `screenshot.sh` exercise the happy path; a stalled compositor needs a fixture
+  that accepts the connection and never answers.
+
+**Interface asks**
+
+- casement: `org.quire.Compositor1.EndEis(session: t)`: end every socket handed out for `session` (stop its input and
+  close the compositor's end), callable only by `transom.service` like `ConnectEis`. Until it exists a close logs a
+  warning and the app keeps the socket it was given (PORTAL-05's other half).
+- sill: serve `org.quire.Shell1.AskPermission` (item 4 above); remote control and interactive screenshots need it.
