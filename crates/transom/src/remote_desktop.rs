@@ -23,6 +23,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use crate::BoxFuture;
 use crate::chooser::{Chooser, ChooserError};
+use crate::link::BusLink;
 use crate::screencast::Dict;
 use crate::screencast::session::SessionKey;
 
@@ -223,14 +224,17 @@ pub trait Compositor1 {
     fn connect_eis(&self, session: u64, devices: u32) -> zbus::Result<zbus::zvariant::OwnedFd>;
 }
 
-/// The real hand-out: `org.quire.Compositor1.ConnectEis` over the session bus.
-#[derive(Debug, Default)]
-pub struct CasementEis;
+/// The real hand-out: `org.quire.Compositor1.ConnectEis` over the session bus, asked from the
+/// connection that owns the portal's name (the compositor tells its caller by that connection).
+#[derive(Debug)]
+pub struct CasementEis {
+    link: BusLink,
+}
 
 impl CasementEis {
-    /// A hand-out that connects to the session bus on first use.
-    pub fn new() -> Self {
-        Self
+    /// A hand-out that asks through `link`.
+    pub fn new(link: BusLink) -> Self {
+        Self { link }
     }
 }
 
@@ -242,7 +246,10 @@ impl EisHandout for CasementEis {
     ) -> BoxFuture<'a, Result<OwnedFd, EisError>> {
         Box::pin(async move {
             let call = |error: zbus::Error| EisError::Call(error.to_string());
-            let connection = zbus::Connection::session().await.map_err(call)?;
+            let connection = self
+                .link
+                .connection()
+                .map_err(|error| EisError::Call(error.to_string()))?;
             let proxy = Compositor1Proxy::new(&connection).await.map_err(call)?;
             match proxy.connect_eis(session, kinds.to_wire()).await {
                 Ok(fd) => Ok(OwnedFd::from(fd)),

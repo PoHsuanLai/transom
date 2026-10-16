@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use transom::capture::DisplayName;
-use transom::chooser::ShellChooser;
+use transom::link::BusLink;
 use transom::screencast::restore::FileStore;
 use transom::screenshot::{ExtOpen, LiveLayout, OutputGrab, ScreenshotSetup, ShellColorPicker};
 use transom::settings::DesktopAppearance;
@@ -16,11 +16,13 @@ async fn main() -> ExitCode {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let parts = Parts::real(
-        ShellChooser::new(),
         FileStore::new(state_file()),
         DesktopAppearance::at(appearance_file()),
-    )
-    .with_screenshots(screenshots());
+    );
+    let parts = {
+        let setup = screenshots(parts.link());
+        parts.with_screenshots(setup)
+    };
     match serve(parts).await {
         Ok(_connection) => {
             std::future::pending::<()>().await;
@@ -59,7 +61,7 @@ fn appearance_file() -> PathBuf {
 /// find theirs), files in `$HOME/Pictures`, named with the time the portal started. The outputs
 /// are asked of the compositor at each screenshot, so a screen plugged in or out is accounted
 /// for. The colour picker is the shell's.
-fn screenshots() -> ScreenshotSetup {
+fn screenshots(link: BusLink) -> ScreenshotSetup {
     let pictures = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Pictures"))
         .unwrap_or_default();
@@ -75,5 +77,5 @@ fn screenshots() -> ScreenshotSetup {
         pictures,
         stamp,
     )
-    .with_picker(Box::new(ShellColorPicker::new()))
+    .with_picker(Box::new(ShellColorPicker::new(link)))
 }

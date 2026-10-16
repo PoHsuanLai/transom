@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use transom_core::{CastSource, Choice, ChoiceRequest, CursorMode, Multiple};
 
 use crate::BoxFuture;
+use crate::link::BusLink;
 
 /// Why the person could not be asked.
 #[derive(Debug, thiserror::Error)]
@@ -82,14 +83,17 @@ pub trait Shell1 {
     ) -> zbus::Result<u32>;
 }
 
-/// The real chooser: the desktop shell's picker over the session bus.
-#[derive(Debug, Default)]
-pub struct ShellChooser;
+/// The real chooser: the desktop shell's picker over the session bus, asked from the connection
+/// that owns the portal's name (the shell answers no other).
+#[derive(Debug)]
+pub struct ShellChooser {
+    link: BusLink,
+}
 
 impl ShellChooser {
-    /// A chooser that connects to the session bus on first use.
-    pub fn new() -> Self {
-        Self
+    /// A chooser that asks through `link`.
+    pub fn new(link: BusLink) -> Self {
+        Self { link }
     }
 }
 
@@ -99,7 +103,7 @@ impl Chooser for ShellChooser {
         request: &'a ChoiceRequest,
     ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>> {
         Box::pin(async move {
-            let connection = zbus::Connection::session().await.map_err(call_failed)?;
+            let connection = self.link.connection()?;
             let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
             let cursor_modes = request.cursor_modes.iter().map(|m| m.to_wire()).collect();
             let asked = proxy

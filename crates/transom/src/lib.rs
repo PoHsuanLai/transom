@@ -12,13 +12,15 @@
 //! - [`access`]: how the person is asked a yes-or-no question about an app ([`access::Asker`]).
 //! - [`settings::AppearanceSource`]: where the appearance comes from.
 //!
-//! [`serve`] puts the six interfaces on the session bus.
+//! [`serve`] puts the six interfaces on the session bus. Every question the portal asks goes out
+//! on the connection that owns its name ([`link::BusLink`]), because the shell answers only that one.
 
 pub mod access;
 pub mod capture;
 pub mod chooser;
 pub mod error;
 pub mod inhibit;
+pub mod link;
 pub mod remote_desktop;
 pub mod screencast;
 pub mod screenshot;
@@ -56,26 +58,38 @@ pub struct Parts {
     pub access: Box<dyn access::Asker>,
     /// Takes screenshots; without a setup every screenshot is answered as failed.
     pub screenshots: screenshot::ScreenshotSetup,
+    /// The connection that owns the portal's name, once [`serve`] has built it. The seams that
+    /// ask the shell or the compositor hold a copy.
+    pub link: link::BusLink,
 }
 
 impl Parts {
-    /// The real seams: the shell's chooser, a restore file and the desktop's settings.
+    /// The real seams: the shell's chooser, a restore file and the desktop's settings. Every seam
+    /// that asks the shell or the compositor asks through one [`link::BusLink`], which [`serve`]
+    /// attaches to the connection that owns the portal's name.
     pub fn real(
-        chooser: chooser::ShellChooser,
         restore: screencast::restore::FileStore,
         appearance: settings::DesktopAppearance,
     ) -> Self {
+        let link = link::BusLink::new();
         Self {
-            chooser: Box::new(chooser),
+            chooser: Box::new(chooser::ShellChooser::new(link.clone())),
             restore: Box::new(restore),
             appearance: Box::new(appearance),
             consent: Box::new(remote_desktop::ShellConsent::new(Box::new(
-                chooser::ShellChooser::new(),
+                chooser::ShellChooser::new(link.clone()),
             ))),
-            eis: Box::new(remote_desktop::CasementEis::new()),
-            access: Box::new(access::ShellAsker::new()),
+            eis: Box::new(remote_desktop::CasementEis::new(link.clone())),
+            access: Box::new(access::ShellAsker::new(link.clone())),
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
+            link,
         }
+    }
+
+    /// The link the real seams ask through, for a seam built outside [`Parts::real`] (the colour
+    /// picker of the screenshot setup).
+    pub fn link(&self) -> link::BusLink {
+        self.link.clone()
     }
 
     /// These parts with screenshots set up as `screenshots` says.
@@ -89,6 +103,17 @@ impl Parts {
 ///
 /// The returned connection keeps the service alive; drop it to stop.
 pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
+    serve_on(zbus::connection::Builder::session()?, parts).await
+}
+
+/// As [`serve`], on the bus `builder` connects to (a private bus, in tests).
+///
+/// The interfaces are served first, the connection is attached to `parts.link`, and only then is
+/// the name claimed, so no call can arrive before the seams know which connection to ask from.
+pub async fn serve_on(
+    builder: zbus::connection::Builder<'_>,
+    parts: Parts,
+) -> Result<zbus::Connection, TransomError> {
     let Parts {
         chooser,
         restore,
@@ -97,9 +122,9 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         eis,
         access,
         screenshots,
+        link,
     } = parts;
-    let connection = zbus::connection::Builder::session()?
-        .name(BUS_NAME)?
+    let connection = builder
         .serve_at(
             PORTAL_PATH,
             screenshot::ScreenshotService::with_setup(screenshots),
@@ -117,6 +142,8 @@ pub async fn serve(parts: Parts) -> Result<zbus::Connection, TransomError> {
         .serve_at(PORTAL_PATH, access::AccessService::new(access))?
         .build()
         .await?;
+    link.attach(connection.clone());
     settings::spawn_watch(connection.clone());
+    connection.request_name(BUS_NAME).await?;
     Ok(connection)
 }

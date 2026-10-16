@@ -12,6 +12,7 @@ use zbus::zvariant::ObjectPath;
 
 use crate::BoxFuture;
 use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
+use crate::link::BusLink;
 use crate::screencast::{Dict, options::app_label};
 
 /// The button that says yes, when the app's request names none.
@@ -135,21 +136,24 @@ impl<T: Asker + ?Sized> Asker for std::sync::Arc<T> {
     }
 }
 
-/// The real asker: the desktop shell's sheet over the session bus.
-#[derive(Debug, Default)]
-pub struct ShellAsker;
+/// The real asker: the desktop shell's sheet over the session bus, asked from the connection
+/// that owns the portal's name.
+#[derive(Debug)]
+pub struct ShellAsker {
+    link: BusLink,
+}
 
 impl ShellAsker {
-    /// An asker that connects to the session bus on first use.
-    pub fn new() -> Self {
-        Self
+    /// An asker that asks through `link`.
+    pub fn new(link: BusLink) -> Self {
+        Self { link }
     }
 }
 
 impl Asker for ShellAsker {
     fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
         Box::pin(async move {
-            let connection = zbus::Connection::session().await.map_err(call_failed)?;
+            let connection = self.link.connection()?;
             let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
             let asked = proxy
                 .ask_permission(

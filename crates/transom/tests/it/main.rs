@@ -1,6 +1,8 @@
-//! transom's tests: one binary. Everything here runs on fakes; nothing opens a bus, a PipeWire
-//! daemon or a compositor. The jailed chain's checks live in `dev/accept/`.
+//! transom's tests: one binary. Everything here runs on fakes; nothing opens a PipeWire daemon or
+//! a compositor, and the one module that needs a bus (`shell_bus`) starts a private one and skips,
+//! saying so, without a `dbus-daemon`. The jailed chain's checks live in `dev/accept/`.
 
+mod bus;
 mod capture;
 mod chooser;
 mod fill;
@@ -12,4 +14,5 @@ mod restore_file;
 mod screenshot;
 mod session;
 mod settings;
+mod shell_bus;
 mod stream;

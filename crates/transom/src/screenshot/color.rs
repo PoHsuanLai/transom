@@ -6,6 +6,7 @@ use transom_core::Rgb;
 
 use crate::BoxFuture;
 use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
+use crate::link::BusLink;
 
 /// The seam: show the colour picker and return the colour, or `None` if the person cancelled.
 pub trait ColorPicker: Send + Sync + std::fmt::Debug {
@@ -16,20 +17,22 @@ pub trait ColorPicker: Send + Sync + std::fmt::Debug {
 /// The real picker: `org.quire.Shell1.PickColor(app_label: s) -> (color: a(ddd))`. The shell
 /// answers with no tuple for a cancel and one tuple of red, green and blue (each 0 to 1) for a
 /// pick.
-#[derive(Debug, Default)]
-pub struct ShellColorPicker;
+#[derive(Debug)]
+pub struct ShellColorPicker {
+    link: BusLink,
+}
 
 impl ShellColorPicker {
-    /// A picker that connects to the session bus on first use.
-    pub fn new() -> Self {
-        Self
+    /// A picker that asks through `link`, the connection that owns the portal's name.
+    pub fn new(link: BusLink) -> Self {
+        Self { link }
     }
 }
 
 impl ColorPicker for ShellColorPicker {
     fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
         Box::pin(async move {
-            let connection = zbus::Connection::session().await.map_err(call_failed)?;
+            let connection = self.link.connection()?;
             let proxy = Shell1Proxy::new(&connection).await.map_err(call_failed)?;
             match proxy.pick_color(app_label).await {
                 Ok(picked) => color_from_wire(&picked),
