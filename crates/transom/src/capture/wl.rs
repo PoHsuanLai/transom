@@ -175,7 +175,7 @@ impl Link {
     /// Wait until the compositor has handled everything sent so far, for at most
     /// [`ROUNDTRIP_DEADLINE`].
     pub fn roundtrip(&mut self) -> Result<(), CaptureError> {
-        let answered = Arc::new(OnceLock::new());
+        let answered = Arc::new(OnceLock::<()>::new());
         let _callback = self.conn.display().sync(&self.qh, Arc::clone(&answered));
         let seen = Arc::clone(&answered);
         match self.wait_within(move |_| seen.get().is_some(), ROUNDTRIP_DEADLINE)? {
@@ -184,8 +184,8 @@ impl Link {
         }
     }
 
-    /// As [`Link::wait`], but gives up once `wait` has passed. Events that arrive are dispatched
-    /// either way, so a later call carries on from where this one stopped.
+    /// Dispatch events until `done` holds, but give up once `wait` has passed. Events that arrive
+    /// are dispatched either way, so a later call carries on from where this one stopped.
     fn wait_within(
         &mut self,
         done: impl Fn(&Wl) -> bool,
