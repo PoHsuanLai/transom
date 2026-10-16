@@ -37,11 +37,15 @@ fi
 if grep -q "label='" "$SHELL_LOG"; then step PASS "2 the shell was asked"; else step FAIL "2 the shell was not asked"; status=1; fi
 
 node=$(cast_field node)
-caps=$(frames_of "$node" 5) || { rc=$?; [ "$rc" = 3 ] && exit 3; caps=""; }
+rc=0
+caps=$(frames_of "$node" 5) || rc=$?
+[ "$rc" = 3 ] && exit 3
 if grep -q "video/x-raw" <<<"$caps" && grep -q "width=(int)" <<<"$caps"; then
   step PASS "3 a consumer received frames: $(grep -o 'width=(int)[0-9]*, height=(int)[0-9]*' <<<"$caps" | head -n 1)"
 else
   step FAIL "3 no frames reached the consumer"; status=1
+  # What the consumer said, so a failure names its cause.
+  tail -n 15 <<<"$caps" | sed 's/^/  consumer: /'
 fi
 
 token=$(cast_field token)

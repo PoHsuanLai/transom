@@ -24,19 +24,10 @@ trap 'stop_fake_shell; stop_chain' EXIT
 # The portal frontend asks the Access portal before it takes a screenshot; the fake shell says yes
 # (TRANSOM_FAKE_ACCESS, default 0) and the call is logged in $SHELL_LOG.
 start_fake_shell none
-dir=$(mktemp -d)
-mon="$dir/monitor"
-gdbus monitor --session --dest org.freedesktop.portal.Desktop >"$mon" 2>&1 &
-mpid=$!
-trap 'kill "$mpid" 2>/dev/null || true; stop_fake_shell; stop_chain' EXIT
-sleep 0.5
-"${PORTAL[@]}" --method org.freedesktop.portal.Screenshot.Screenshot "" "{'handle_token': <'accept'>}" >/dev/null
-uri=""
-for _ in $(seq 1 100); do
-  uri=$(grep -o "'uri': <'file://[^']*'>" "$mon" | head -n 1 | sed "s/.*<'file:\/\/\(.*\)'>/\1/" || true)
-  [ -n "$uri" ] && break
-  sleep 0.1
-done
+# The call is made by a client that stays on the bus until the answer comes: the frontend closes
+# a request whose caller has gone (a one-shot `gdbus call` leaves at once, before Access answers).
+answer=$(timeout 60 python3 "$root/dev/lib/portal_client.py" screenshot || true)
+uri=$(printf '%s' "$answer" | sed -n 's/^response=0 uri=file:\/\/\(.*\)$/\1/p')
 if [ -z "$uri" ]; then fail response "no uri arrived"; else pass response "a uri arrived"; fi
 if grep -q "^ask " "$SHELL_LOG"; then pass access "the person was asked through the shell"; else echo "NOTE access: the frontend did not ask (an app it already trusts is not asked)"; fi
 file=$(printf '%b' "$(printf '%s' "$uri" | sed 's/%\(..\)/\\x\1/g')")

@@ -1,5 +1,6 @@
 # Sourceable: starts and stops the jailed portal chain on a private bus:
-#   pipewire, wireplumber, transom, xdg-desktop-portal (which finds transom through dist/quire.portal).
+#   pipewire, wireplumber, transom, xdg-permission-store, xdg-desktop-portal (which finds transom
+#   through dist/quire.portal).
 # Everything runs in the jail's scratch; nothing touches the real session. Callers have already
 # run require_jail. Owner: P2-Z-tr (skeleton), the P2-T lanes fill the details they need.
 #
@@ -18,6 +19,12 @@ transom_tool() {
         if [ -x "$p" ]; then echo "$p"; return 0; fi
       done
       echo "chain.sh: xdg-desktop-portal is not installed" >&2; return 3 ;;
+    xdg-permission-store)
+      # Fedora and Debian/Ubuntu: /usr/libexec; Arch: /usr/lib.
+      for p in /usr/libexec/xdg-permission-store /usr/lib/xdg-permission-store; do
+        if [ -x "$p" ]; then echo "$p"; return 0; fi
+      done
+      echo "chain.sh: xdg-permission-store is not installed" >&2; return 3 ;;
     *)
       if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
       echo "chain.sh: $name is not installed" >&2; return 3 ;;
@@ -48,10 +55,11 @@ start_chain() {
   state=$TRANSOM_STATE
   mkdir -p "$state/portals" "$XDG_CONFIG_HOME/xdg-desktop-portal"
 
-  local pw wp tr xdp
+  local pw wp tr ps xdp
   pw=$(transom_tool pipewire) || return 3
   wp=$(transom_tool wireplumber) || return 3
   tr=$(transom_tool transom) || return 3
+  ps=$(transom_tool xdg-permission-store) || return 3
   xdp=$(transom_tool xdg-desktop-portal) || return 3
 
   if [ -n "$envfile" ]; then
@@ -73,6 +81,9 @@ start_chain() {
   "$pw" >"$state/pipewire.log" 2>&1 & echo "TRANSOM_PIPEWIRE_PID=$!" >> "$state/env"
   "$wp" >"$state/wireplumber.log" 2>&1 & echo "TRANSOM_WIREPLUMBER_PID=$!" >> "$state/env"
   "$tr" >"$state/transom.log" 2>&1 & echo "TRANSOM_PID=$!" >> "$state/env"
+  # The frontend records the person's answers (Access, screen sharing) in the permission store and
+  # gives up on the request when it cannot reach one; the private bus has no activation for it.
+  "$ps" --replace >"$state/permission-store.log" 2>&1 & echo "TRANSOM_PERMISSION_STORE_PID=$!" >> "$state/env"
   "$xdp" >"$state/portal.log" 2>&1 & echo "TRANSOM_PORTAL_PID=$!" >> "$state/env"
   # `export` on each line: callers source this file in their own shell and start more clients
   # (a fake shell, a cast) that must find the same bus.
@@ -99,7 +110,7 @@ stop_chain() {
   state=$(transom_state_dir) || return 0
   envfile=$state/env
   [ -f "$envfile" ] || return 0
-  for var in TRANSOM_PORTAL_PID TRANSOM_PID TRANSOM_WIREPLUMBER_PID TRANSOM_PIPEWIRE_PID TRANSOM_BUS_PID; do
+  for var in TRANSOM_PORTAL_PID TRANSOM_PERMISSION_STORE_PID TRANSOM_PID TRANSOM_WIREPLUMBER_PID TRANSOM_PIPEWIRE_PID TRANSOM_BUS_PID; do
     pid=$(sed -n "s/^$var=//p" "$envfile" | tail -n 1)
     if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
   done
