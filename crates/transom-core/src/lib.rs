@@ -25,7 +25,10 @@ pub use choice::{Choice, ChoiceRefusal, ChoiceRequest, Multiple, SourceKinds};
 pub use inhibit::{BookChange, InhibitBook, InhibitFlags, RequestHandle};
 pub use layout::{Extent, OutputFacts, Point, Tile, Turn, arrange};
 pub use pacing::{FrameRate, Held, Negotiated, Step, decide};
-pub use restore::{Grant, PersistMode, RestoreBook, RestoreToken};
+pub use restore::{
+    Grant, MAX_GRANTS, PersistMode, RestoreBook, RestoreToken, UNTIL_REVOKED_SECS,
+    WHILE_RUNNING_SECS,
+};
 pub use screencast::{
     CastIn, CastOut, CastReply, CastSession, CastSource, CursorMode, PwNode, step,
 };

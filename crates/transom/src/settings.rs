@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use transom_core::{
@@ -13,7 +13,15 @@ use transom_core::{
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedValue, StructureBuilder, Value};
 
+use crate::fsread::read_text;
 use crate::{PORTAL_PATH, TransomError};
+
+/// The largest appearance document that is read. The real one is a few hundred bytes.
+const MAX_DOCUMENT_BYTES: u64 = 64 * 1024;
+
+/// How long a read of the document may take before the last good appearance is used instead. A
+/// disk that hangs (a network home) must not hang the portal.
+const READ_DEADLINE: Duration = Duration::from_secs(2);
 
 /// How often the watcher looks at the appearance. The document is small and changes by hand, so a
 /// slow look is enough.
@@ -28,10 +36,11 @@ pub enum AppearanceError {
     Unreadable(String),
 }
 
-/// The seam: where the current appearance comes from.
-pub trait AppearanceSource: Send + std::fmt::Debug {
+/// The seam: where the current appearance comes from. A read may block on a disk, so callers run
+/// it on a blocking thread.
+pub trait AppearanceSource: Send + Sync + std::fmt::Debug {
     /// The appearance right now.
-    fn current(&mut self) -> Result<Appearance, AppearanceError>;
+    fn current(&self) -> Result<Appearance, AppearanceError>;
 }
 
 /// The appearance when nothing is chosen: no scheme preference, no accent, normal contrast.
@@ -61,11 +70,13 @@ impl DesktopAppearance {
 }
 
 impl AppearanceSource for DesktopAppearance {
-    fn current(&mut self) -> Result<Appearance, AppearanceError> {
+    /// The document, if it is a regular file of a sensible size; a FIFO, a device or a huge file
+    /// is an error, never a hang or an allocation.
+    fn current(&self) -> Result<Appearance, AppearanceError> {
         let Some(path) = &self.path else {
             return Ok(UNCHOSEN);
         };
-        match std::fs::read_to_string(path) {
+        match read_text(path, MAX_DOCUMENT_BYTES) {
             Ok(text) => Ok(parse_appearance(&text)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(UNCHOSEN),
             Err(e) => Err(AppearanceError::Unreadable(e.to_string())),
@@ -129,7 +140,7 @@ pub fn parse_appearance(text: &str) -> Appearance {
 pub struct FixedAppearance(pub Appearance);
 
 impl AppearanceSource for FixedAppearance {
-    fn current(&mut self) -> Result<Appearance, AppearanceError> {
+    fn current(&self) -> Result<Appearance, AppearanceError> {
         Ok(self.0)
     }
 }
@@ -196,44 +207,74 @@ pub fn read_namespaces(appearance: &Appearance, patterns: &[String]) -> Namespac
     out
 }
 
-#[derive(Debug)]
-struct Tracked {
-    source: Box<dyn AppearanceSource>,
-    last: Option<Appearance>,
-}
-
 /// The served interface.
 #[derive(Debug)]
 pub struct SettingsService {
-    tracked: Mutex<Tracked>,
+    source: Arc<dyn AppearanceSource>,
+    /// What apps last saw. Held only to read or replace it, never across a read of the document.
+    last: Mutex<Option<Appearance>>,
+    /// Held by a read of the document until it really ends, so a read that outlasts its deadline
+    /// is not followed by another on a second thread.
+    reading: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SettingsService {
     /// A service reading from `appearance`.
     pub fn new(appearance: Box<dyn AppearanceSource>) -> Self {
         Self {
-            tracked: Mutex::new(Tracked {
-                source: appearance,
-                last: None,
-            }),
+            source: Arc::from(appearance),
+            last: Mutex::new(None),
+            reading: Arc::default(),
         }
     }
 
-    /// The appearance now, remembered as what apps last saw.
-    fn snapshot(&self) -> Result<Appearance, AppearanceError> {
-        let mut t = self.tracked.lock().unwrap_or_else(|p| p.into_inner());
-        let now = t.source.current()?;
-        t.last = Some(now);
-        Ok(now)
+    /// Read the document on a blocking thread, for at most [`READ_DEADLINE`].
+    async fn read_now(&self) -> Result<Appearance, AppearanceError> {
+        let unreadable = |why: &str| AppearanceError::Unreadable(why.to_owned());
+        let Ok(turn) = Arc::clone(&self.reading).try_lock_owned() else {
+            return Err(unreadable("the last read has not finished"));
+        };
+        let source = Arc::clone(&self.source);
+        let read = tokio::task::spawn_blocking(move || {
+            let _turn = turn;
+            source.current()
+        });
+        match tokio::time::timeout(READ_DEADLINE, read).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(unreadable(&error.to_string())),
+            Err(_) => Err(unreadable("the read took too long")),
+        }
+    }
+
+    fn last(&self) -> std::sync::MutexGuard<'_, Option<Appearance>> {
+        self.last.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The appearance now, remembered as what apps last saw. When the document cannot be read the
+    /// last good appearance stands; with none yet, the error.
+    pub async fn snapshot(&self) -> Result<Appearance, AppearanceError> {
+        match self.read_now().await {
+            Ok(now) => {
+                *self.last() = Some(now);
+                Ok(now)
+            }
+            Err(error) => match *self.last() {
+                Some(old) => {
+                    tracing::warn!(%error, "the appearance could not be read; the last one stands");
+                    Ok(old)
+                }
+                None => Err(error),
+            },
+        }
     }
 
     /// Look at the appearance again; the settings that differ from what apps last saw. The first
-    /// look only sets the baseline.
-    pub fn refresh(&self) -> Result<Vec<(SettingKey, SettingValue)>, AppearanceError> {
-        let mut t = self.tracked.lock().unwrap_or_else(|p| p.into_inner());
-        let now = t.source.current()?;
-        let diff = t.last.map(|old| changes(&old, &now)).unwrap_or_default();
-        t.last = Some(now);
+    /// look only sets the baseline. An unreadable document changes nothing.
+    pub async fn refresh(&self) -> Result<Vec<(SettingKey, SettingValue)>, AppearanceError> {
+        let now = self.read_now().await?;
+        let mut last = self.last();
+        let diff = last.map(|old| changes(&old, &now)).unwrap_or_default();
+        *last = Some(now);
         Ok(diff)
     }
 }
@@ -264,7 +305,7 @@ mod interface {
             .await?;
         loop {
             tokio::time::sleep(every).await;
-            let diff = match iface.get().await.refresh() {
+            let diff = match iface.get().await.refresh().await {
                 Ok(diff) => diff,
                 Err(error) => {
                     tracing::warn!(%error, "the appearance could not be read");
@@ -292,6 +333,7 @@ mod interface {
         async fn read_all(&self, namespaces: Vec<String>) -> Result<Namespaces, PortalError> {
             let appearance = self
                 .snapshot()
+                .await
                 .map_err(|e| PortalError::Failed(e.to_string()))?;
             Ok(read_namespaces(&appearance, &namespaces))
         }
@@ -300,6 +342,7 @@ mod interface {
         async fn read(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
             let appearance = self
                 .snapshot()
+                .await
                 .map_err(|e| PortalError::Failed(e.to_string()))?;
             read_setting(&appearance, namespace, key)
         }

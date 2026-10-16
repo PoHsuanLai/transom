@@ -5,6 +5,7 @@ use transom::screencast::PipewireSink;
 use transom::screencast::restore::{FileStore, RestoreStore};
 use transom::screencast::stream::FrameSink;
 use transom::settings::{AppearanceSource, DesktopAppearance};
+use transom_core::PersistMode;
 use transom_core::restore::Grant;
 use transom_core::{CastSource, CursorMode, RestoreBook, RestoreToken};
 
@@ -33,6 +34,8 @@ fn the_file_store_round_trips_a_book_and_a_missing_file_is_empty() {
                 CastSource::Output("A".into()),
                 CastSource::Window("a window, with: odd\tcharacters".into()),
             ],
+            mode: PersistMode::UntilRevoked,
+            granted_at: 1_800_000_000,
         },
     );
     store.save(&book).expect("save");

@@ -3,9 +3,14 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use transom_core::{Grant, RestoreBook, RestoreToken};
+use transom_core::{Grant, PersistMode, RestoreBook, RestoreToken};
 
 use crate::chooser::source_from_wire;
+use crate::fsread::read_text;
+
+/// The largest restore file that is read. Far more than [`transom_core::MAX_GRANTS`] grants need;
+/// a bigger file is not one this program wrote.
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Why the book could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -47,15 +52,47 @@ impl FileStore {
 }
 
 impl RestoreStore for FileStore {
+    /// The saved book. A file whose first line is not this version's is moved aside to
+    /// `<name>.bad` and reported as damaged; a line that cannot be read is skipped (loudly) and
+    /// a copy of the whole file is kept as `<name>.bad`, so a flaw in one line loses one grant and
+    /// never the rest, and nothing is lost without a trace.
     fn load(&self) -> Result<RestoreBook, StoreError> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(text) => decode(&text),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RestoreBook::new()),
-            // A file that is not text is a file we did not write.
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+        let text = match read_text(&self.path, MAX_FILE_BYTES) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(RestoreBook::new());
+            }
+            // A file that is not text, not a regular file or far too large is not one we wrote.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::InvalidData | std::io::ErrorKind::InvalidInput
+                ) =>
+            {
+                self.set_aside(Aside::Move);
+                return Err(StoreError::Damaged);
+            }
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+        match decode(&text) {
+            Decoded::Book { book, skipped: 0 } => Ok(book),
+            Decoded::Book { book, skipped } => {
+                tracing::error!(
+                    skipped,
+                    "lines of the restore file could not be read and were left out; \
+                     a copy of the file is kept next to it"
+                );
+                self.set_aside(Aside::Copy);
+                Ok(book)
+            }
+            Decoded::OlderVersion => {
+                tracing::info!("the restore file is from an older version; its grants are dropped");
+                Ok(RestoreBook::new())
+            }
+            Decoded::Foreign => {
+                self.set_aside(Aside::Move);
                 Err(StoreError::Damaged)
             }
-            Err(error) => Err(StoreError::Io(error)),
         }
     }
 
@@ -77,25 +114,62 @@ impl RestoreStore for FileStore {
         file.sync_all()?;
         drop(file);
         std::fs::rename(&beside, &self.path)?;
+        // The rename is only on disk once the directory entry is: without this a power cut right
+        // after a save can bring the old book back.
+        if let Some(dir) = self.path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
         Ok(())
     }
+}
+
+/// What to do with a file that could not be fully read.
+#[derive(Clone, Copy, Debug)]
+enum Aside {
+    /// Move it away: it is not ours, and the next save must not replace it unseen.
+    Move,
+    /// Keep a copy: it is ours, with a flaw.
+    Copy,
 }
 
 impl FileStore {
     /// The file a save is written to before it replaces the real one.
     fn beside(&self) -> PathBuf {
+        self.with_suffix(".new")
+    }
+
+    /// Where a file that could not be read is kept.
+    pub fn bad_path(&self) -> PathBuf {
+        self.with_suffix(".bad")
+    }
+
+    fn with_suffix(&self, suffix: &str) -> PathBuf {
         let mut name = self.path.file_name().unwrap_or_default().to_os_string();
-        name.push(".new");
+        name.push(suffix);
         self.path.with_file_name(name)
+    }
+
+    fn set_aside(&self, how: Aside) {
+        let bad = self.bad_path();
+        let done = match how {
+            Aside::Move => std::fs::rename(&self.path, &bad),
+            Aside::Copy => std::fs::copy(&self.path, &bad).map(|_| ()),
+        };
+        if let Err(error) = done {
+            tracing::error!(%error, "the damaged restore file could not be kept");
+        }
     }
 }
 
 /// The first line of the file; a different one is a file this version did not write.
-const HEADER: &str = "transom-restore 1";
+const HEADER: &str = "transom-restore 2";
 
-/// One grant per line: the token, the app, then each source as `kind:name`, tab separated. The
-/// fields escape backslash, tab, newline and carriage return, so a window identifier can hold
-/// anything.
+/// The first line of the version before this one, which kept no mode and no date.
+const OLDER_HEADER: &str = "transom-restore 1";
+
+/// One grant per line: the token, the app, the persist mode (1 or 2), when it was given (seconds
+/// since the epoch), then each source as `kind:name`, tab separated. The fields escape backslash,
+/// tab, newline and carriage return, so a window identifier can hold anything.
 fn encode(book: &RestoreBook) -> String {
     let mut text = String::from(HEADER);
     text.push('\n');
@@ -103,6 +177,10 @@ fn encode(book: &RestoreBook) -> String {
         text.push_str(token.expose());
         text.push('\t');
         text.push_str(&escape(&grant.app_id));
+        text.push('\t');
+        text.push_str(&grant.mode.to_wire().to_string());
+        text.push('\t');
+        text.push_str(&grant.granted_at.to_string());
         for source in &grant.sources {
             let (kind, name) = source.wire();
             text.push('\t');
@@ -115,32 +193,60 @@ fn encode(book: &RestoreBook) -> String {
     text
 }
 
-fn decode(text: &str) -> Result<RestoreBook, StoreError> {
+/// What a file's text turned out to be.
+enum Decoded {
+    /// This version's file: the grants that could be read and how many lines could not.
+    Book { book: RestoreBook, skipped: usize },
+    /// The previous version's file.
+    OlderVersion,
+    /// Not a file this program wrote.
+    Foreign,
+}
+
+fn decode(text: &str) -> Decoded {
     let mut lines = text.lines();
-    if lines.next() != Some(HEADER) {
-        return Err(StoreError::Damaged);
+    match lines.next() {
+        Some(HEADER) => {}
+        Some(OLDER_HEADER) => return Decoded::OlderVersion,
+        _ => return Decoded::Foreign,
     }
     let mut book = RestoreBook::new();
+    let mut skipped = 0;
     for line in lines.filter(|l| !l.is_empty()) {
-        let mut fields = line.split('\t');
-        let token = fields
-            .next()
-            .and_then(RestoreToken::parse)
-            .ok_or(StoreError::Damaged)?;
-        let app_id = fields
-            .next()
-            .and_then(unescape)
-            .ok_or(StoreError::Damaged)?;
-        let sources = fields
-            .map(|field| {
-                let (kind, name) = field.split_once(':')?;
-                source_from_wire(kind, &unescape(name)?)
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or(StoreError::Damaged)?;
-        book.remember(token, Grant { app_id, sources });
+        match decode_line(line) {
+            Some((token, grant)) => book.remember(token, grant),
+            None => skipped += 1,
+        }
     }
-    Ok(book)
+    Decoded::Book { book, skipped }
+}
+
+fn decode_line(line: &str) -> Option<(RestoreToken, Grant)> {
+    let mut fields = line.split('\t');
+    let token = RestoreToken::parse(fields.next()?)?;
+    let app_id = unescape(fields.next()?)?;
+    let mode = fields
+        .next()?
+        .parse()
+        .ok()
+        .and_then(PersistMode::from_wire)
+        .filter(|mode| *mode != PersistMode::DoNot)?;
+    let granted_at = fields.next()?.parse().ok()?;
+    let sources = fields
+        .map(|field| {
+            let (kind, name) = field.split_once(':')?;
+            source_from_wire(kind, &unescape(name)?)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((
+        token,
+        Grant {
+            app_id,
+            sources,
+            mode,
+            granted_at,
+        },
+    ))
 }
 
 fn escape(text: &str) -> String {

@@ -1,6 +1,8 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use transom::settings::{
-    AppearanceSource, DesktopAppearance, PortalError, parse_appearance, read_namespaces,
-    read_setting,
+    AppearanceError, AppearanceSource, DesktopAppearance, PortalError, SettingsService,
+    parse_appearance, read_namespaces, read_setting,
 };
 use transom_core::{Appearance, Contrast, Scheme};
 
@@ -43,7 +45,7 @@ fn the_document_gives_a_scheme_and_an_accent() {
 #[test]
 fn a_missing_document_means_nothing_is_chosen() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let mut source = DesktopAppearance::at(dir.path().join("appearance.toml"));
+    let source = DesktopAppearance::at(dir.path().join("appearance.toml"));
     let got = source.current().expect("a missing file is not an error");
     assert_eq!(got.scheme, Scheme::NoPreference);
     assert!(got.accent.is_none());
@@ -53,7 +55,7 @@ fn a_missing_document_means_nothing_is_chosen() {
 fn a_written_document_is_read_again_each_time() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("appearance.toml");
-    let mut source = DesktopAppearance::at(path.clone());
+    let source = DesktopAppearance::at(path.clone());
     std::fs::write(&path, "[appearance]\ntheme = \"dark\"\n").expect("write");
     assert_eq!(source.current().expect("read").scheme, Scheme::Dark);
     std::fs::write(&path, "[appearance]\ntheme = \"light\"\n").expect("write");
@@ -102,4 +104,65 @@ fn read_all_groups_by_namespace_and_honours_patterns() {
         let count: usize = got.values().map(|m| m.len()).sum();
         assert_eq!(count, keys, "{patterns:?}");
     }
+}
+
+#[test]
+fn a_document_that_is_not_a_small_regular_file_is_an_error_not_a_hang() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let huge = dir.path().join("huge.toml");
+    std::fs::write(&huge, vec![b'#'; 65 * 1024]).expect("write");
+    assert!(matches!(
+        DesktopAppearance::at(huge).current(),
+        Err(AppearanceError::Unreadable(_))
+    ));
+    let fifo = dir.path().join("fifo.toml");
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    if made.is_ok_and(|status| status.success()) {
+        assert!(matches!(
+            DesktopAppearance::at(fifo).current(),
+            Err(AppearanceError::Unreadable(_))
+        ));
+    } else {
+        eprintln!("SKIPPED (fifo): no mkfifo");
+    }
+}
+
+/// A source that reads once and then fails.
+#[derive(Debug, Default)]
+struct ReadsOnce(AtomicU32);
+
+impl AppearanceSource for ReadsOnce {
+    fn current(&self) -> Result<Appearance, AppearanceError> {
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(parse_appearance("[appearance]\ntheme = \"dark\"\n"))
+        } else {
+            Err(AppearanceError::Unreadable("gone".to_owned()))
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_last_good_appearance_stands_when_the_document_cannot_be_read() {
+    let service = SettingsService::new(Box::new(ReadsOnce::default()));
+    assert_eq!(
+        service.snapshot().await.expect("first").scheme,
+        Scheme::Dark
+    );
+    assert_eq!(
+        service
+            .snapshot()
+            .await
+            .expect("the last one stands")
+            .scheme,
+        Scheme::Dark
+    );
+    assert!(service.refresh().await.is_err(), "and the watcher is told");
+
+    let never = SettingsService::new(Box::new(DesktopAppearance::at(std::path::PathBuf::from(
+        "/nonexistent-dir/x/appearance.toml",
+    ))));
+    assert!(
+        never.snapshot().await.is_ok(),
+        "a missing document means nothing is chosen"
+    );
 }

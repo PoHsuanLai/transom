@@ -1,7 +1,9 @@
 //! Restore tokens: how an app that shared a screen once can share it again without asking.
 //!
 //! A token stands for an app and the sources it was given. It is a bearer secret, so its `Debug`
-//! is redacted and nothing here logs it.
+//! is redacted and nothing here logs it. A grant is remembered for a limited time, by the mode the
+//! app asked for, and never for an app with no identity: two apps that both arrive with an empty
+//! app id would otherwise share each other's grants, so such an app is asked every time.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -82,6 +84,18 @@ impl fmt::Debug for RestoreToken {
     }
 }
 
+/// How long a grant for [`PersistMode::WhileRunning`] is remembered: a day. The portal cannot see
+/// the app end, so "while it runs" is bounded by the longest a session of one app plausibly lasts.
+pub const WHILE_RUNNING_SECS: u64 = 24 * 60 * 60;
+
+/// How long a grant for [`PersistMode::UntilRevoked`] is remembered: thirty days, the interval at
+/// which macOS asks again whether an app may keep recording the screen. After that the person is
+/// asked once more, and a new grant starts a new thirty days.
+pub const UNTIL_REVOKED_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// The most grants the book holds; when more are added the oldest are forgotten.
+pub const MAX_GRANTS: usize = 256;
+
 /// What one token stands for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grant {
@@ -89,6 +103,42 @@ pub struct Grant {
     pub app_id: String,
     /// The sources it was given.
     pub sources: Vec<CastSource>,
+    /// How long the app asked for it to be remembered.
+    pub mode: PersistMode,
+    /// When it was given, in seconds since the Unix epoch.
+    pub granted_at: u64,
+}
+
+impl Grant {
+    /// The grant to remember for `app_id`, or `None` when none may be kept: the app asked for no
+    /// persistence, has no identity (an empty app id is shared by every app that has none), or
+    /// shared nothing.
+    pub fn issue(
+        app_id: &str,
+        sources: Vec<CastSource>,
+        mode: PersistMode,
+        now: u64,
+    ) -> Option<Self> {
+        let keeps = matches!(mode, PersistMode::WhileRunning | PersistMode::UntilRevoked);
+        (keeps && !app_id.is_empty() && !sources.is_empty()).then(|| Self {
+            app_id: app_id.to_owned(),
+            sources,
+            mode,
+            granted_at: now,
+        })
+    }
+
+    /// Whether the grant still counts at `now`: younger than its mode allows, and not dated in
+    /// the future (a clock that moved back, or a file that was edited).
+    pub fn valid_at(&self, now: u64) -> bool {
+        let limit = match self.mode {
+            PersistMode::WhileRunning => WHILE_RUNNING_SECS,
+            PersistMode::UntilRevoked => UNTIL_REVOKED_SECS,
+            _ => return false,
+        };
+        now.checked_sub(self.granted_at)
+            .is_some_and(|age| age <= limit)
+    }
 }
 
 /// Every token this portal remembers.
@@ -113,19 +163,22 @@ impl RestoreBook {
         self.grants.remove(token)
     }
 
-    /// What `token` restores for `app_id` given the sources that exist now.
+    /// What `token` restores for `app_id` at time `now` given the sources that exist now.
     ///
-    /// All or nothing: if the token is unknown, belongs to another app, or any remembered source
-    /// is gone, the result is empty and the person is asked again.
+    /// All or nothing: if the token is unknown, expired, belongs to another app, `app_id` is
+    /// empty, or any remembered source is gone, the result is empty and the person is asked again.
     pub fn resolve(
         &self,
         token: &RestoreToken,
         app_id: &str,
         live: &[CastSource],
+        now: u64,
     ) -> Vec<CastSource> {
         match self.grants.get(token) {
             Some(grant)
-                if grant.app_id == app_id
+                if !app_id.is_empty()
+                    && grant.app_id == app_id
+                    && grant.valid_at(now)
                     && !grant.sources.is_empty()
                     && grant.sources.iter().all(|s| live.contains(s)) =>
             {
@@ -133,6 +186,26 @@ impl RestoreBook {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Forget the grants that no longer count at `now`, and the oldest ones past [`MAX_GRANTS`].
+    /// How many were forgotten.
+    pub fn prune(&mut self, now: u64) -> usize {
+        let before = self.grants.len();
+        self.grants.retain(|_, grant| grant.valid_at(now));
+        if self.grants.len() > MAX_GRANTS {
+            let mut by_age: Vec<(u64, RestoreToken)> = self
+                .grants
+                .iter()
+                .map(|(token, grant)| (grant.granted_at, token.clone()))
+                .collect();
+            by_age.sort();
+            let surplus = self.grants.len() - MAX_GRANTS;
+            for (_, token) in by_age.into_iter().take(surplus) {
+                self.grants.remove(&token);
+            }
+        }
+        before - self.grants.len()
     }
 
     /// Every remembered grant, in token order (for a store to write).

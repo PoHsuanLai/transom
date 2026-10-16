@@ -4,7 +4,6 @@
 //! decisions are `transom_core::step`; this runs the outputs it asks for.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -15,7 +14,7 @@ use transom_core::{
 use zbus::Connection;
 
 use super::options;
-use super::restore::RestoreStore;
+use super::restore::{RestoreStore, StoreError};
 use super::run::Share;
 use super::session::{Refusal, Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
@@ -201,7 +200,9 @@ impl Shared {
                     CastOut::CloseStream => {
                         held(&self.shares).remove(key);
                     }
-                    CastOut::Reply(reply) => outcome = self.outcome(key, app_id, selection, reply),
+                    CastOut::Reply(reply) => {
+                        outcome = self.outcome(key, app_id, selection, reply).await;
+                    }
                     // A later core adds outputs this does not know; they are ignored.
                     _ => {}
                 }
@@ -271,8 +272,8 @@ impl Shared {
     }
 
     /// Turn the machine's reply into the wire answer, keeping a restore token if asked to.
-    fn outcome(
-        &self,
+    async fn outcome(
+        self: &Arc<Self>,
         key: &SessionKey,
         app_id: &str,
         selection: &Selection,
@@ -285,7 +286,10 @@ impl Shared {
                 };
                 let kept = match selection.persist {
                     PersistMode::DoNot => None,
-                    _ => self.keep(app_id, sources, selection.restore.as_ref()),
+                    mode => {
+                        self.keep(app_id, sources, mode, selection.restore.clone())
+                            .await
+                    }
                 };
                 let kept = kept.as_ref().map(|token| (selection.persist, token));
                 match options::granted_results(&streams, kept) {
@@ -301,18 +305,27 @@ impl Shared {
         }
     }
 
-    /// What a restore token stands for now: the sources it was given, if all still exist.
-    async fn restored(&self, selection: &Selection, app_id: &str) -> Vec<CastSource> {
-        let Some(token) = &selection.restore else {
+    /// What a restore token stands for now: the sources it was given, if all still exist and the
+    /// grant has not expired. An app with no identity is never restored.
+    async fn restored(self: &Arc<Self>, selection: &Selection, app_id: &str) -> Vec<CastSource> {
+        let Some(token) = selection.restore.clone() else {
             return Vec::new();
         };
+        if app_id.is_empty() {
+            return Vec::new();
+        }
         let display = self.display.clone();
         let live = tokio::task::spawn_blocking(move || capture::live_sources(&display))
             .await
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        let sources = self.read_book().resolve(token, app_id, &live);
+        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
+        let sources = tokio::task::spawn_blocking(move || {
+            this.read_book().resolve(&token, &app_id, &live, unix_now())
+        })
+        .await
+        .unwrap_or_default();
         if sources.iter().all(|s| selection.kinds.offers(s)) {
             sources
         } else {
@@ -320,25 +333,59 @@ impl Shared {
         }
     }
 
-    /// Remember the grant under a fresh token (and forget the one it replaces). `None` when no
-    /// token could be made or kept.
-    fn keep(
+    /// Remember the grant under a fresh token (and forget the one it replaces), off the async
+    /// runtime because the book is a file. `None` when nothing may be kept (the app has no
+    /// identity), or no token could be made or kept; the person is then asked again next time.
+    async fn keep(
+        self: &Arc<Self>,
+        app_id: &str,
+        sources: Vec<CastSource>,
+        mode: PersistMode,
+        replaces: Option<RestoreToken>,
+    ) -> Option<RestoreToken> {
+        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
+        tokio::task::spawn_blocking(move || {
+            this.keep_now(&app_id, sources, mode, replaces.as_ref())
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    fn keep_now(
         &self,
         app_id: &str,
         sources: Vec<CastSource>,
+        mode: PersistMode,
         replaces: Option<&RestoreToken>,
     ) -> Option<RestoreToken> {
-        let token = RestoreToken::mint(entropy()?);
-        let grant = Grant {
-            app_id: app_id.to_owned(),
-            sources,
+        let now = unix_now();
+        let Some(grant) = Grant::issue(app_id, sources, mode, now) else {
+            tracing::info!(
+                "this share is not remembered: the app has no identity to remember it by"
+            );
+            return None;
         };
+        let token = RestoreToken::mint(crate::random::bytes::<16>()?);
         let _book = held(&self.book_lock);
-        let mut book = self.restore.load().unwrap_or_default();
+        let mut book = match self.restore.load() {
+            Ok(book) => book,
+            // The damaged file was set aside by the store, so nothing is lost by starting anew.
+            Err(StoreError::Damaged) => {
+                tracing::error!("the saved grants were damaged and were set aside; starting anew");
+                RestoreBook::new()
+            }
+            // Contents unknown: saving now could erase everyone else's grants.
+            Err(error) => {
+                tracing::error!(%error, "the saved grants could not be read, so this one is not saved");
+                return None;
+            }
+        };
         if let Some(old) = replaces {
             book.forget(old);
         }
         book.remember(token.clone(), grant);
+        book.prune(now);
         match self.restore.save(&book) {
             Ok(()) => Some(token),
             Err(error) => {
@@ -366,11 +413,9 @@ pub(super) async fn forget_object(connection: &Connection, key: &SessionKey) {
         .await;
 }
 
-/// 16 bytes from the operating system's random source.
-fn entropy() -> Option<[u8; 16]> {
-    let mut bytes = [0_u8; 16];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .ok()?;
-    Some(bytes)
+/// Seconds since the Unix epoch, the clock grants are dated by.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
