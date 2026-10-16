@@ -1,12 +1,13 @@
 //! Waiting on the Wayland socket for a bounded time.
 
 use std::os::fd::BorrowedFd;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 
-use super::{CaptureError, broken};
+use super::{Canceller, CaptureError, Connection, broken};
 
 /// What a bounded wait on the socket came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,5 +41,34 @@ pub(super) fn readable_within(
         Ok(0) => Ok(Readiness::Silent),
         Ok(_) | Err(Errno::INTR) => Ok(Readiness::Ready),
         Err(error) => Err(broken(error)),
+    }
+}
+
+/// Cuts a Wayland connection if a call that cannot be given a deadline of its own takes too long.
+///
+/// Arm it before the call and drop it after: dropping disarms it. If the deadline passes first the
+/// connection is shut, which makes the blocked call return an error.
+#[derive(Debug)]
+pub(super) struct Watchdog {
+    /// Dropping this wakes the watchdog thread, which then ends without cutting anything.
+    _disarm: mpsc::Sender<()>,
+}
+
+impl Watchdog {
+    /// Watch `conn` for `deadline`. `None` if no thread could be started (the call then has no
+    /// deadline, as it had none before).
+    pub(super) fn arm(conn: &Connection, deadline: Duration) -> Option<Self> {
+        let fd = conn.backend().poll_fd().try_clone_to_owned().ok()?;
+        let canceller = Canceller::new(fd);
+        let (disarm, armed) = mpsc::channel::<()>();
+        std::thread::Builder::new()
+            .name("transom-watchdog".to_owned())
+            .spawn(move || {
+                if let Err(mpsc::RecvTimeoutError::Timeout) = armed.recv_timeout(deadline) {
+                    canceller.cancel();
+                }
+            })
+            .ok()?;
+        Some(Self { _disarm: disarm })
     }
 }

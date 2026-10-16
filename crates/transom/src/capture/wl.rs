@@ -11,16 +11,18 @@ mod wait;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsFd;
-use std::os::unix::fs::{FileExt, OpenOptionsExt};
+use std::os::unix::fs::FileExt;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use transom_core::{CastSource, CursorMode};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{BindError, GlobalList, GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
+use wayland_client::protocol::{
+    wl_buffer, wl_callback, wl_output, wl_registry, wl_shm, wl_shm_pool,
+};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
     ext_foreign_toplevel_handle_v1::{self, ExtForeignToplevelHandleV1},
@@ -38,14 +40,31 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 };
 
 use self::outputs::SeenOutput;
-use self::wait::{Readiness, Waited, readable_within};
+use self::wait::{Readiness, Waited, Watchdog, readable_within};
 use super::{
     Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat,
 };
 
-/// How long a frame request is waited on in one go when the caller will wait for as long as it
-/// takes.
-const PATIENCE: Duration = Duration::from_secs(3600);
+/// How long the compositor has to accept the connection and list its globals. It does both at
+/// once; a longer wait means it is stalled (a GPU reset, a frozen session).
+const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long it has to answer one round trip.
+const ROUNDTRIP_DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long it has to describe the buffers of a new copy session.
+const CONSTRAINTS_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How long a one-picture request waits for its picture. A picture that never comes (an output
+/// that never copies) is an error, not an hour of a blocked thread.
+const FIRST_FRAME_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The longest edge of a captured picture, in pixels. Larger is a window or output resizing
+/// itself to exhaust memory, or a bug.
+const MAX_EDGE: u32 = 16_384;
+
+/// The most bytes of one captured picture (8192 by 8192 pixels of 4 bytes).
+const MAX_FRAME_BYTES: u64 = 256 * 1024 * 1024;
 
 /// How many times a frame that fails for a reason that may pass is asked for again.
 const FRAME_ATTEMPTS: u32 = 3;
@@ -137,7 +156,12 @@ impl Link {
                 "a display name must be a socket path".to_owned(),
             ));
         };
-        let (globals, queue) = registry_queue_init::<Wl>(&conn).map_err(broken)?;
+        // Listing the globals is a round trip with no deadline of its own: a watchdog cuts the
+        // connection if it takes too long, so a stalled compositor fails the call.
+        let watchdog = Watchdog::arm(&conn, CONNECT_DEADLINE);
+        let listed = registry_queue_init::<Wl>(&conn);
+        drop(watchdog);
+        let (globals, queue) = listed.map_err(broken)?;
         let qh = queue.handle();
         Ok(Self {
             conn,
@@ -148,19 +172,16 @@ impl Link {
         })
     }
 
-    /// Wait until the compositor has handled everything sent so far.
+    /// Wait until the compositor has handled everything sent so far, for at most
+    /// [`ROUNDTRIP_DEADLINE`].
     pub fn roundtrip(&mut self) -> Result<(), CaptureError> {
-        self.queue.roundtrip(&mut self.wl).map_err(broken)?;
-        Ok(())
-    }
-
-    /// Dispatch events until `done` holds. Blocks.
-    fn wait(&mut self, done: impl Fn(&Wl) -> bool) -> Result<(), CaptureError> {
-        self.conn.flush().map_err(broken)?;
-        while !done(&self.wl) {
-            self.queue.blocking_dispatch(&mut self.wl).map_err(broken)?;
+        let answered = Arc::new(OnceLock::new());
+        let _callback = self.conn.display().sync(&self.qh, Arc::clone(&answered));
+        let seen = Arc::clone(&answered);
+        match self.wait_within(move |_| seen.get().is_some(), ROUNDTRIP_DEADLINE)? {
+            Waited::Done => Ok(()),
+            Waited::TimedOut => Err(CaptureError::TimedOut),
         }
-        Ok(())
     }
 
     /// As [`Link::wait`], but gives up once `wait` has passed. Events that arrive are dispatched
@@ -378,7 +399,12 @@ impl Copier {
             inflight: None,
             retries: 0,
         };
-        copier.link.wait(|wl| wl.generation > 0 || wl.stopped)?;
+        let described = copier
+            .link
+            .wait_within(|wl| wl.generation > 0 || wl.stopped, CONSTRAINTS_DEADLINE)?;
+        if described == Waited::TimedOut {
+            return Err(CaptureError::TimedOut);
+        }
         copier.adopt_constraints()?;
         Ok(copier)
     }
@@ -418,9 +444,18 @@ impl Copier {
         height: u32,
         format: PixelFormat,
     ) -> Result<ShmBuffer, CaptureError> {
-        let stride = width.checked_mul(4).ok_or(CaptureError::Unsupported)?;
-        let len = usize::try_from(u64::from(stride) * u64::from(height))
-            .map_err(|_| CaptureError::Unsupported)?;
+        if width == 0 || height == 0 {
+            return Err(CaptureError::Unsupported);
+        }
+        if width > MAX_EDGE || height > MAX_EDGE {
+            return Err(CaptureError::TooLarge);
+        }
+        let stride = width.checked_mul(4).ok_or(CaptureError::TooLarge)?;
+        let bytes = u64::from(stride) * u64::from(height);
+        if bytes > MAX_FRAME_BYTES {
+            return Err(CaptureError::TooLarge);
+        }
+        let len = usize::try_from(bytes).map_err(|_| CaptureError::TooLarge)?;
         let file = scratch_file(len)?;
         let to_i32 = |v: u32| i32::try_from(v).map_err(|_| CaptureError::Unsupported);
         let pool = self.shm.create_pool(
@@ -450,14 +485,12 @@ impl Copier {
         })
     }
 
-    /// Ask for the next frame and wait for it. A picture that has not changed sends none, so this
-    /// blocks until it changes.
+    /// Ask for the next frame and wait for it, for at most [`FIRST_FRAME_DEADLINE`]. A picture
+    /// that has not changed sends none, but the first request is answered with the whole picture,
+    /// so a deadline passing means the output is not copying at all.
     pub fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        loop {
-            if let Some(frame) = self.frame_within(PATIENCE)? {
-                return Ok(frame);
-            }
-        }
+        self.frame_within(FIRST_FRAME_DEADLINE)?
+            .ok_or(CaptureError::TimedOut)
     }
 
     /// As [`Copier::frame`], but `None` once `wait` has passed with the picture unchanged. The
@@ -575,22 +608,12 @@ fn pixel_format(format: wl_shm::Format) -> Option<PixelFormat> {
     }
 }
 
-/// An unnamed file of `len` bytes in shared memory: created, then unlinked at once.
+/// An anonymous file of `len` bytes in memory: no name in any directory, so there is nothing for
+/// another process to find, squat on or open, and nothing to clean up.
 fn scratch_file(len: usize) -> Result<File, CaptureError> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let path = format!(
-        "/dev/shm/transom-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
+    let fd = rustix::fs::memfd_create("transom-frame", rustix::fs::MemfdFlags::CLOEXEC)
         .map_err(broken)?;
-    std::fs::remove_file(&path).map_err(broken)?;
+    let file = File::from(fd);
     file.set_len(len as u64).map_err(broken)?;
     Ok(file)
 }
@@ -621,6 +644,22 @@ ignore_events! {
     ExtOutputImageCaptureSourceManagerV1, ();
     ExtForeignToplevelImageCaptureSourceManagerV1, ();
     ExtImageCopyCaptureManagerV1, ();
+}
+
+/// A round trip's callback: it fires once, when the compositor has handled everything before it.
+impl Dispatch<wl_callback::WlCallback, Arc<OnceLock<()>>> for Wl {
+    fn event(
+        _: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        answered: &Arc<OnceLock<()>>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            let _ = answered.set(());
+        }
+    }
 }
 
 impl Dispatch<ExtForeignToplevelListV1, ()> for Wl {

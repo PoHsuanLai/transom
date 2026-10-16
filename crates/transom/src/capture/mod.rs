@@ -109,6 +109,12 @@ pub enum CaptureError {
     /// The connection to the compositor failed.
     #[error("the display connection: {0}")]
     Connection(String),
+    /// The compositor did not answer within the time allowed.
+    #[error("the compositor did not answer in time")]
+    TimedOut,
+    /// The source is larger than a picture may be (an edge over 16384 pixels, or over 256 MiB).
+    #[error("the source is too large to capture")]
+    TooLarge,
 }
 
 /// What a wait for the next frame came to.
@@ -124,7 +130,9 @@ pub enum Arrival {
 /// A source of frames.
 pub trait CaptureSource: Send + std::fmt::Debug {
     /// The next frame. Blocks until the source has something new (frames are damage-gated: a
-    /// static picture yields none), and returns [`CaptureError::Ended`] once the source is gone.
+    /// static picture yields none) but not for ever: a source that does not answer within its
+    /// deadline is [`CaptureError::TimedOut`]. Returns [`CaptureError::Ended`] once the source is
+    /// gone.
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError>;
     /// As [`CaptureSource::frame`], but gives up after `wait` with [`Arrival::Quiet`]. A request
     /// for a frame stays open across calls, so no change is missed between them. A source that

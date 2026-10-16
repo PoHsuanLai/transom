@@ -220,6 +220,7 @@ fn serve(
 ) -> Result<(), String> {
     let failed = |error: pw::Error| error.to_string();
     pw::init();
+    let node_name = share_node_name();
     let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(failed)?;
     let context = pw::context::ContextRc::new(&mainloop, None).map_err(failed)?;
     let core = context.connect_rc(None).map_err(failed)?;
@@ -231,7 +232,7 @@ fn serve(
             *pw::keys::MEDIA_TYPE => "Video",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Screen",
-            *pw::keys::NODE_NAME => "transom-screen-share",
+            *pw::keys::NODE_NAME => node_name.as_str(),
             *pw::keys::NODE_DESCRIPTION => "Screen share",
         },
     )
@@ -309,6 +310,14 @@ fn serve(
     mainloop.run();
     let _ = stream.disconnect();
     Ok(())
+}
+
+/// A node name of this share alone. A fixed name would tell any other client of the graph which
+/// node carries a screen; a random one is not a guarantee of secrecy (the graph lists nodes) but
+/// it stops a share being found by name.
+fn share_node_name() -> String {
+    let unique = crate::random::hex::<6>().unwrap_or_else(|| std::process::id().to_string());
+    format!("transom-share-{unique}")
 }
 
 /// The process step: if the picture is due (new, or old enough to repeat) and a buffer is free,
