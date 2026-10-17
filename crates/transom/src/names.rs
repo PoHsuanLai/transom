@@ -116,18 +116,17 @@ pub fn exec_program(text: &str) -> Option<String> {
     for line in text.lines().map(str::trim) {
         if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             in_entry = group == "Desktop Entry";
-        } else if in_entry {
-            if let Some(value) = line
+        } else if in_entry
+            && let Some(value) = line
                 .strip_prefix("Exec")
                 .and_then(|rest| rest.trim_start().strip_prefix('='))
-            {
-                let value = value.trim();
-                let word = match value.strip_prefix('"') {
-                    Some(quoted) => quoted.split('"').next(),
-                    None => value.split_whitespace().next(),
-                };
-                return word.filter(|w| !w.is_empty()).map(str::to_owned);
-            }
+        {
+            let value = value.trim();
+            let word = match value.strip_prefix('"') {
+                Some(quoted) => quoted.split('"').next(),
+                None => value.split_whitespace().next(),
+            };
+            return word.filter(|w| !w.is_empty()).map(str::to_owned);
         }
     }
     None

@@ -172,15 +172,6 @@ fn wire_values_round_trip() {
     assert_eq!(CursorMode::from_wire(0), None);
 }
 
-fn grant(app: &str, mode: PersistMode, at: u64) -> Grant {
-    Grant {
-        app_id: app.to_owned(),
-        sources: vec![out("DP-1")],
-        mode,
-        granted_at: at,
-    }
-}
-
 /// NEW-PI-7: the person can see what is remembered, one line per app, and take it back.
 #[test]
 fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
@@ -229,8 +220,8 @@ fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
     assert_eq!(left[0].app_id, "org.example.Rec");
     let token = RestoreToken::mint([3; 16]);
     assert_eq!(
-        book.resolve(&token, "org.example.Rec", &[out("DP-1")], NOW),
-        vec![out("DP-1")],
+        book.resolve(&token, "org.example.Rec", &[out("A"), out("B")], NOW),
+        vec![out("A"), out("B")],
         "the other app keeps its grant"
     );
 }
