@@ -119,7 +119,9 @@ async fn a_socket_is_handed_out_only_after_the_person_allowed_it() {
     assert!(eis.asked().is_empty());
     service.begin(&key(1)).await;
     let fd = service.connect(&key(1)).await.expect("a socket");
-    assert_eq!(eis.asked(), vec![(1, DeviceKinds::from_wire(3))]);
+    let asked = eis.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].1, DeviceKinds::from_wire(3));
 
     let mut client = UnixStream::from(fd);
     let mut server = eis.take_server().expect("the compositor's end");
@@ -143,8 +145,10 @@ async fn each_session_has_its_own_number_for_the_compositor() {
         service.begin(&key(n)).await;
         service.connect(&key(n)).await.expect("a socket");
     }
+    // A run counts up from where it starts (NEW-PI-8), one number per session.
     let numbers: Vec<u64> = eis.asked().iter().map(|(n, _)| *n).collect();
-    assert_eq!(numbers, vec![1, 2]);
+    assert_eq!(numbers.len(), 2);
+    assert_eq!(numbers[1], numbers[0] + 1, "{numbers:?}");
 }
 
 #[tokio::test]
@@ -287,7 +291,8 @@ async fn a_session_has_one_socket_and_closing_it_takes_the_socket_back() {
     let mut client = UnixStream::from(fd);
     assert!(eis.ended().is_empty());
     service.close(&key(1)).await;
-    assert_eq!(eis.ended(), vec![1], "the compositor was told to stop");
+    let handed = eis.asked()[0].0;
+    assert_eq!(eis.ended(), vec![handed], "the compositor was told to stop");
     let mut byte = [0_u8; 1];
     assert_eq!(
         client.read(&mut byte).expect("end of file"),
@@ -321,14 +326,15 @@ async fn sessions_end_with_the_peer_they_hang_on_and_their_sockets_are_taken_bac
         service.connect(&key(n)).await.expect("a socket");
     }
 
+    let handed: Vec<u64> = eis.asked().iter().map(|(n, _)| *n).collect();
     assert_eq!(service.release_peer(":1.7").await, vec![key(1)]);
     assert_eq!(service.len(), 1, "the other caller's session stays");
-    assert_eq!(eis.ended(), vec![1]);
+    assert_eq!(eis.ended(), handed[..1]);
 
     // The frontend leaving ends what is left, whoever called.
     assert_eq!(service.release_peer(":1.2").await, vec![key(2)]);
     assert!(service.is_empty());
-    assert_eq!(eis.ended(), vec![1, 2]);
+    assert_eq!(eis.ended(), handed);
     assert!(service.release_peer(":1.2").await.is_empty(), "once");
 }
 
