@@ -39,6 +39,13 @@ pub trait EisHandout: Send + Sync + fmt::Debug {
     /// its end. Best effort (a compositor that is gone has nothing left to stop); failures are
     /// logged here.
     fn end<'a>(&'a self, session: u64) -> BoxFuture<'a, ()>;
+
+    /// Take back every socket an earlier run of this portal handed out: this portal has just
+    /// started and holds no session, so the compositor must hold no input of its. Best effort,
+    /// like [`EisHandout::end`]. The default does nothing.
+    fn end_all<'a>(&'a self) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::ready(()))
+    }
 }
 
 impl<T: EisHandout + ?Sized> EisHandout for Arc<T> {
@@ -52,6 +59,10 @@ impl<T: EisHandout + ?Sized> EisHandout for Arc<T> {
 
     fn end<'a>(&'a self, session: u64) -> BoxFuture<'a, ()> {
         (**self).end(session)
+    }
+
+    fn end_all<'a>(&'a self) -> BoxFuture<'a, ()> {
+        (**self).end_all()
     }
 }
 
@@ -75,6 +86,9 @@ pub trait Compositor1 {
 
     /// End every socket handed out for a session.
     fn end_eis(&self, session: u64) -> zbus::Result<()>;
+
+    /// End every socket handed out to this portal before now (it has just started).
+    fn end_all_eis(&self) -> zbus::Result<()>;
 }
 
 /// The real hand-out: `org.quire.Compositor1.ConnectEis` over the session bus, asked from the
@@ -146,6 +160,39 @@ impl EisHandout for CasementEis {
             }
         })
     }
+
+    fn end_all<'a>(&'a self) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            match tokio::time::timeout(EIS_DEADLINE, self.end_all_now()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "input sockets of an earlier run could not be taken back")
+                }
+                Err(_) => tracing::warn!(
+                    "the compositor did not take back the input sockets of an earlier run in time"
+                ),
+            }
+        })
+    }
+}
+
+impl CasementEis {
+    async fn end_all_now(&self) -> Result<(), EisError> {
+        let proxy = self.proxy().await?;
+        match proxy.end_all_eis().await {
+            Ok(()) => Ok(()),
+            // A compositor that is not there has nothing to end; one that drops sockets by itself
+            // when the portal leaves the bus does not offer this call.
+            Err(zbus::Error::MethodError(name, ..))
+                if ["ServiceUnknown", "NameHasNoOwner", "UnknownMethod"]
+                    .iter()
+                    .any(|tail| name.as_str().ends_with(tail)) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(EisError::Call(error.to_string())),
+        }
+    }
 }
 
 /// A hand-out that makes socket pairs: it keeps the server ends so a test can talk through
@@ -155,6 +202,7 @@ pub struct FakeEis {
     asked: Mutex<Vec<(u64, DeviceKinds)>>,
     servers: Mutex<Vec<(u64, UnixStream)>>,
     ended: Mutex<Vec<u64>>,
+    ended_all: Mutex<usize>,
 }
 
 impl FakeEis {
@@ -177,6 +225,14 @@ impl FakeEis {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// How many times every socket of an earlier run was taken back.
+    pub fn ended_all(&self) -> usize {
+        *self
+            .ended_all
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Takes the server end of the most recent socket.
@@ -221,6 +277,19 @@ impl EisHandout for FakeEis {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|(id, _)| *id != session);
+        Box::pin(std::future::ready(()))
+    }
+
+    /// Records that every earlier socket was taken back and closes all the server ends.
+    fn end_all<'a>(&'a self) -> BoxFuture<'a, ()> {
+        *self
+            .ended_all
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) += 1;
+        self.servers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         Box::pin(std::future::ready(()))
     }
 }

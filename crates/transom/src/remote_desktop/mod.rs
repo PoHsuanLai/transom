@@ -113,6 +113,13 @@ impl RemoteDesktopService {
         self.core.create(key, app_id, tether)
     }
 
+    /// Called once, as the portal starts: the compositor drops every input socket an earlier run
+    /// handed out. This run's book is empty, so an app of the earlier run that still holds one
+    /// would keep its input with no session, no sheet and no way to end it (NEW-PI-8).
+    pub async fn forget_previous_run(&self) {
+        self.core.end_all().await;
+    }
+
     /// End every session hung on `peer` (a unique name that left the bus, or stopped being the
     /// portal frontend), taking back the sockets handed out; the handles ended.
     pub async fn release_peer(&self, peer: &str) -> Vec<SessionKey> {

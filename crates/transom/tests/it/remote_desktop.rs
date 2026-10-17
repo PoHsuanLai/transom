@@ -347,3 +347,25 @@ fn one_caller_cannot_fill_the_book_of_sessions() {
             .is_ok()
     );
 }
+
+/// NEW-PI-8: the compositor outlives the portal, so a restarted portal must not reuse the numbers
+/// of the run before (an end called for number 1 would hit another run's session), and it asks the
+/// compositor to drop what the run before handed out.
+#[tokio::test]
+async fn a_restarted_portal_counts_above_the_last_run_and_drops_its_leftovers() {
+    let mut numbers = Vec::new();
+    for _run in 0..2 {
+        let (service, _, eis) = service(vec![ConsentAnswer::Allowed]);
+        service.forget_previous_run().await;
+        assert_eq!(eis.ended_all(), 1, "the compositor is told at start");
+        service.create(key(1), "a");
+        service.begin(&key(1)).await;
+        service.connect(&key(1)).await.expect("a socket");
+        numbers.push(eis.asked()[0].0);
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    assert!(
+        numbers[0] > 1_000_000 && numbers[1] > numbers[0],
+        "the second run starts above the first: {numbers:?}"
+    );
+}

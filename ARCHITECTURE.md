@@ -142,7 +142,9 @@ screen-sharing pick is never a yes. The yes is bound to the session it was asked
 (only after a yes, once per session) asks the compositor for a socket with `EisHandout`, which tags
 everything the app sends as remote input of this session; closing the session calls `EndEis`, so the
 compositor stops that input and closes its end. The `Notify*` methods are accepted and dropped: input
-comes only over the socket.
+comes only over the socket. A restart of the portal loses its book while the compositor keeps what it handed out,
+so session numbers count up from the clock (never reused) and a start asks the compositor to drop the earlier
+run's sockets (`EndAllEis`; see FINDINGS NEW-PI-8).
 
 ## 4c. Screenshot consent
 

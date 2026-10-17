@@ -67,9 +67,14 @@ pub(super) struct Core {
 impl Core {
     pub fn new(eis: Box<dyn EisHandout>) -> Self {
         Self {
-            book: Mutex::new(Book::default()),
+            book: Mutex::new(Book::starting_after(clock_nanos())),
             eis,
         }
+    }
+
+    /// Tell the compositor to drop every input socket an earlier run of this portal handed out.
+    pub async fn end_all(&self) {
+        self.eis.end_all().await;
     }
 
     fn lock(&self) -> MutexGuard<'_, Book> {
@@ -197,4 +202,14 @@ impl Core {
     pub fn len(&self) -> usize {
         self.lock().entries.len()
     }
+}
+
+/// Nanoseconds since the Unix epoch, the number a run's sessions count up from (see
+/// [`Book::starting_after`]); a clock before the epoch counts as zero.
+fn clock_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }

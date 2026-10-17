@@ -214,5 +214,12 @@ pub async fn serve_on(
     settings::spawn_watch(connection.clone());
     peers::spawn_watch(&connection).await?;
     connection.request_name(BUS_NAME).await?;
+    if let Ok(remote) = connection
+        .object_server()
+        .interface::<_, remote_desktop::RemoteDesktopService>(PORTAL_PATH)
+        .await
+    {
+        remote.get().await.forget_previous_run().await;
+    }
     Ok(connection)
 }

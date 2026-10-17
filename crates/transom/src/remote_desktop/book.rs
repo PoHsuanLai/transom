@@ -44,13 +44,24 @@ pub(super) struct Entry {
 }
 
 /// Every open session.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct Book {
     next: u64,
     pub entries: BTreeMap<SessionKey, Entry>,
 }
 
 impl Book {
+    /// An empty book whose first session is numbered `after + 1`. The compositor keys what it
+    /// handed out by these numbers and may outlive this process, so a new run starts above every
+    /// number an earlier one could have used (the clock, in nanoseconds) and an end called for
+    /// number 1 can never reach another run's session.
+    pub fn starting_after(after: u64) -> Self {
+        Self {
+            next: after,
+            entries: BTreeMap::new(),
+        }
+    }
+
     /// A new entry for `app_id` hung on `tether` at time `now`; its number is never reused. A
     /// full book drops the sessions that never began and are older than [`UNSTARTED_TTL`] to make
     /// room; the result is the handles dropped.

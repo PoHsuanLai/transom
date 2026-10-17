@@ -385,3 +385,9 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
   the shell and Settings are all asked for at `Full` (`peers::need`). The one `Proof::Exe` left is the unit manager's
   own identity (`ManagerCheck::Verified`, role `manager`), which is a program row with no unit and so cannot be proved
   higher; its answers decide whether others reach `Full`, nothing more.
+- **NEW-PI-8: a restart strands handed-out sockets (transom half).** Session numbers now count up from the clock in
+  nanoseconds (`Book::starting_after`), so a number is never reused by a later run, and at start `serve_on` calls
+  `RemoteDesktopService::forget_previous_run`, which asks the compositor to drop every socket handed to this portal
+  before: `org.quire.Compositor1.EndAllEis()`, tolerated when the method or the compositor is absent. The compositor's
+  half (the method, or ending a portal's sockets itself when the portal leaves the bus) is casement's; until it lands
+  an app of the earlier run keeps its input. Closes when casement has it.
