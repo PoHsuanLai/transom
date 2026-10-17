@@ -161,6 +161,20 @@ every app without an identity would share one grant, so it is asked every time. 
 most 256 grants (the oldest go first). A damaged file is moved to `<name>.bad`, a flawed line is
 skipped and a copy of the file is kept beside it.
 
+A grant is made, and a token honoured, only for an app that is shown to be what its id says
+(`app_proof.rs`, NEW-PI-2). The id is the frontend's word: for a sandboxed app read from the sandbox, for a host
+app the app's own claim (it registers it, or names its launcher scope). So the app's bus connection is read from
+its session handle (the frontend builds `.../session/<sender>/<token>` from the real sender, and the frontend is
+proved `Full`), `peers.who` says who is on it, and:
+
+- a sandboxed app (the sandbox's metadata agrees with its control group) whose sandbox names the id is remembered;
+- a host program whose image is root-owned and is the program the id's desktop entry runs, the entry being
+  root's to write (the first entry found decides, so one in the person's home registers nothing), is remembered;
+- anything else, a host app that only declares an id included, gets the sheet every time and no token.
+
+`Parts.prover` is `None` in a real run, which `serve` turns into the `PeerProver`; a service built with no prover
+(`ScreenCastService::new`) remembers nobody.
+
 ## 5. Window capture
 
 Single windows come from the compositor's `ext_foreign_toplevel_image_capture_source_manager_v1`

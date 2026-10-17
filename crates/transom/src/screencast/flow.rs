@@ -18,6 +18,7 @@ use super::restore::{RestoreStore, StoreError};
 use super::run::Share;
 use super::session::{Refusal, Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
+use crate::app_proof::{AppProof, AppProver, NoProof};
 use crate::capture::{self, DisplayName};
 use crate::chooser::{Chooser, unavailable_is_cancel};
 use crate::names::AppNames;
@@ -52,6 +53,8 @@ pub(super) struct Shared {
     shares: Mutex<BTreeMap<SessionKey, Share>>,
     chooser: Box<dyn Chooser>,
     restore: Box<dyn RestoreStore>,
+    /// Says which apps are what their ids say; only those are remembered.
+    pub prover: Box<dyn AppProver>,
     /// Held while the token book is read, changed and written, so two Starts do not lose a token.
     book_lock: Mutex<()>,
     display: DisplayName,
@@ -73,6 +76,7 @@ impl Shared {
             shares: Mutex::new(BTreeMap::new()),
             chooser,
             restore,
+            prover: Box::new(NoProof),
             book_lock: Mutex::new(()),
             display: DisplayName::session(),
             names: AppNames::none(),
@@ -155,7 +159,7 @@ impl Shared {
                 _ => return Outcome::Failed,
             }
         };
-        let restored = self.restored(&selection, app_id).await;
+        let restored = self.restored(&selection, key, app_id).await;
         let outcome = self
             .run_machine(key, app_id, &selection, restored, connection)
             .await;
@@ -291,6 +295,7 @@ impl Shared {
                 };
                 let kept = match selection.persist {
                     PersistMode::DoNot => None,
+                    _ if !self.remembers(key, app_id).await => None,
                     mode => {
                         self.keep(app_id, sources, mode, selection.restore.clone())
                             .await
@@ -310,13 +315,30 @@ impl Shared {
         }
     }
 
+    /// Whether `app_id`, calling through `key`, is shown to be what its id says. Only such an app
+    /// is remembered or restored; any other is asked every time (NEW-PI-2).
+    async fn remembers(&self, key: &SessionKey, app_id: &str) -> bool {
+        match self.prover.prove(&key.0, app_id).await {
+            AppProof::Proven => true,
+            AppProof::Unproven(why) => {
+                tracing::info!(%why, "this app is asked every time: it is not shown to be what its id says");
+                false
+            }
+        }
+    }
+
     /// What a restore token stands for now: the sources it was given, if all still exist and the
     /// grant has not expired. An app with no identity is never restored.
-    async fn restored(self: &Arc<Self>, selection: &Selection, app_id: &str) -> Vec<CastSource> {
+    async fn restored(
+        self: &Arc<Self>,
+        selection: &Selection,
+        key: &SessionKey,
+        app_id: &str,
+    ) -> Vec<CastSource> {
         let Some(token) = selection.restore.clone() else {
             return Vec::new();
         };
-        if app_id.is_empty() {
+        if app_id.is_empty() || !self.remembers(key, app_id).await {
             return Vec::new();
         }
         let display = self.display.clone();

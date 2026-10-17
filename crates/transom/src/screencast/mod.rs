@@ -69,6 +69,15 @@ impl ScreenCastService {
         }
     }
 
+    /// This service remembering the apps `prover` shows to be what their ids say, and no others.
+    /// Without it no app is remembered. Call it before the service is shared.
+    pub fn with_prover(mut self, prover: Box<dyn crate::app_proof::AppProver>) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.prover = prover;
+        }
+        self
+    }
+
     /// This service showing apps by the names `names` finds. Call it before the service is shared.
     pub fn with_names(mut self, names: crate::names::AppNames) -> Self {
         if let Some(shared) = Arc::get_mut(&mut self.shared) {

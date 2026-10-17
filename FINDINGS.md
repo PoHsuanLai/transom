@@ -363,3 +363,15 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
 - **Not verified here (no compile, no run):** the new tests, the build with and without the feature, and the
   `Cargo.lock` move from peephole v0.1.1 to v0.1.4. The workspace `rustix` gains the `process` feature (the person's user
   id), which adds no crate.
+
+## Production audit, wave 3 (2026-10-17)
+
+- **NEW-PI-2: remembering needs a proven app.** See ARCHITECTURE 4d. Residuals: (a) the sandbox proof is peephole's
+  metadata-plus-scope check, which a same-user process could imitate with a private mount namespace and a scope of its
+  own making; the owner's ruling lets scope claims stand only where the person answers, so this is the weakest part,
+  and a stronger proof needs the frontend to say how it learned the id (an ask for xdg-desktop-portal, not ours).
+  (b) A host app whose launcher is a script (the entry runs `firefox`, the image is `bash`) is never remembered.
+  (c) The restore file is still plain 0600 text in the person's state folder; a token is useless to a program that is
+  not shown to be its app, which was the point.
+  (d) Unverified: that xdg-dbus-proxy's connection reads as the sandboxed app through its own `.flatpak-info`. If it
+  reads as a plain program, no Flatpak app is remembered until that is fixed; the failure is asking too often.

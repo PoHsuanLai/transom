@@ -22,6 +22,7 @@
 //! (`dev_rows`); a release build has no such seam.
 
 pub mod access;
+pub mod app_proof;
 pub mod capture;
 pub mod chooser;
 #[cfg(feature = "debug")]
@@ -76,6 +77,9 @@ pub struct Parts {
     /// The connection that owns the portal's name, once [`serve`] has built it. The seams that
     /// ask the shell or the compositor hold a copy.
     pub link: link::BusLink,
+    /// Decides which apps may be remembered; `None` is the real one, built by [`serve`] from the
+    /// link and the names (an app that is not shown to be what its id says is asked every time).
+    pub prover: Option<Box<dyn app_proof::AppProver>>,
     /// The table of the desktop's own programs, which says who the portal frontend and the shell
     /// are. An empty table (the default) recognises nobody, so every call is refused and nobody is
     /// asked.
@@ -103,6 +107,7 @@ impl Parts {
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
             names: names::AppNames::none(),
             link,
+            prover: None,
             callers: peephole_bus::peephole_core::Table::empty(),
         }
     }
@@ -110,6 +115,12 @@ impl Parts {
     /// These parts recognising the programs `callers` names.
     pub fn with_callers(mut self, callers: peephole_bus::peephole_core::Table) -> Self {
         self.callers = callers;
+        self
+    }
+
+    /// These parts remembering apps as `prover` says.
+    pub fn with_prover(mut self, prover: Box<dyn app_proof::AppProver>) -> Self {
+        self.prover = Some(prover);
         self
     }
 
@@ -157,8 +168,11 @@ pub async fn serve_on(
         screenshots,
         names,
         link,
+        prover,
         callers,
     } = parts;
+    let prover =
+        prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
     let guard = peers::FrontendOnly::new(link.clone());
     let connection = builder
         .serve_at(
@@ -170,6 +184,7 @@ pub async fn serve_on(
             PORTAL_PATH,
             screencast::ScreenCastService::new(chooser, restore)
                 .with_names(names.clone())
+                .with_prover(prover)
                 .with_guard(guard.clone()),
         )?
         .serve_at(

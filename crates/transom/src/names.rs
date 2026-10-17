@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::app_proof::RootHeld;
 use crate::fsread::read_text;
 
 /// The most characters of an app's name that is shown or sent to the shell.
@@ -65,6 +66,26 @@ impl AppNames {
         })
     }
 
+    /// What the registered desktop entry of `app_id` says to run. The first entry found decides
+    /// (earlier data directories win, as they do for the desktop), and it counts only when `root`
+    /// says nobody but root can have written it: an entry in the person's home is theirs to write.
+    pub fn registered(&self, app_id: &str, root: &dyn RootHeld) -> Registered {
+        let id = app_id.strip_suffix(".desktop").unwrap_or(app_id).trim();
+        if !plain_id(id) {
+            return Registered::Nothing;
+        }
+        let found = self.dirs.iter().find_map(|dir| {
+            let path = dir.join("applications").join(format!("{id}.desktop"));
+            let text = read_text(&path, MAX_ENTRY_BYTES).ok()?;
+            Some((path, text))
+        });
+        match found {
+            None => Registered::Nothing,
+            Some((path, _)) if !root.holds(&path) => Registered::NotRootHeld,
+            Some((_, text)) => exec_program(&text).map_or(Registered::Nothing, Registered::Program),
+        }
+    }
+
     fn entry_name(&self, id: &str) -> Option<String> {
         if !plain_id(id) {
             return None;
@@ -75,6 +96,41 @@ impl AppNames {
             entry_name(&text, &self.locales)
         })
     }
+}
+
+/// What an app's registered desktop entry says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Registered {
+    /// The program its `Exec` line starts, as written, from an entry only root can have written.
+    Program(String),
+    /// The entry that applies is in a place someone other than root can write.
+    NotRootHeld,
+    /// No entry, or none that names a program.
+    Nothing,
+}
+
+/// The program the `Exec` line of a desktop entry's `[Desktop Entry]` group starts: its first word,
+/// or the quoted first word.
+pub fn exec_program(text: &str) -> Option<String> {
+    let mut in_entry = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_entry = group == "Desktop Entry";
+        } else if in_entry {
+            if let Some(value) = line
+                .strip_prefix("Exec")
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+            {
+                let value = value.trim();
+                let word = match value.strip_prefix('"') {
+                    Some(quoted) => quoted.split('"').next(),
+                    None => value.split_whitespace().next(),
+                };
+                return word.filter(|w| !w.is_empty()).map(str::to_owned);
+            }
+        }
+    }
+    None
 }
 
 /// An id that is safe to turn into a file name: letters, digits, dot, dash, underscore.
