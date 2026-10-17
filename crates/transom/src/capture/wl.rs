@@ -42,7 +42,8 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 use self::outputs::SeenOutput;
 use self::wait::{Readiness, Waited, Watchdog, readable_within};
 use super::{
-    Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, PhysicalSizeWire, PixelFormat,
+    Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, FramePool, PhysicalSizeWire,
+    PixelFormat,
 };
 
 /// How long the compositor has to accept the connection and list its globals. It does both at
@@ -362,6 +363,8 @@ pub(super) struct Copier {
     inflight: Option<ExtImageCopyCaptureFrameV1>,
     /// How many answers in a row said to try again.
     retries: u32,
+    /// Memory for the pictures, used again from frame to frame.
+    pool: Arc<FramePool>,
 }
 
 impl Copier {
@@ -398,6 +401,7 @@ impl Copier {
             },
             inflight: None,
             retries: 0,
+            pool: FramePool::new(),
         };
         let described = copier
             .link
@@ -549,8 +553,10 @@ impl Copier {
         let Some(shm) = self.buffer.as_ref() else {
             return Err(CaptureError::Unsupported);
         };
-        let mut bytes = vec![0; shm.len];
-        shm.file.read_exact_at(&mut bytes, 0).map_err(broken)?;
+        let mut bytes = self.pool.take(shm.len);
+        shm.file
+            .read_exact_at(bytes.as_mut_slice(), 0)
+            .map_err(broken)?;
         Ok(CapturedFrame {
             size: PhysicalSizeWire {
                 width: shm.width,

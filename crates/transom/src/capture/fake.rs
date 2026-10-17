@@ -41,7 +41,7 @@ impl FakeCapture {
                 data: FrameData::Shm {
                     format: PixelFormat::Xrgb8888,
                     stride,
-                    bytes: vec![(n % 256) as u8; stride as usize * size.height as usize],
+                    bytes: vec![(n % 256) as u8; stride as usize * size.height as usize].into(),
                 },
                 presented_ns: u64::from(n) * 1_000_000,
             })

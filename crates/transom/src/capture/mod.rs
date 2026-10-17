@@ -7,6 +7,7 @@
 
 mod fake;
 pub mod output;
+mod pool;
 pub mod toplevel;
 mod wl;
 
@@ -18,6 +19,7 @@ use std::time::Duration;
 use transom_core::{CastSource, CursorMode, OutputFacts};
 
 pub use fake::FakeCapture;
+pub use pool::{FramePool, POOL_KEEP, PixelBuffer};
 
 /// A size in physical pixels, as the capture produces it: for a window, logical size times
 /// scale, rounded.
@@ -75,8 +77,8 @@ pub enum FrameData {
         format: PixelFormat,
         /// Bytes per row.
         stride: u32,
-        /// The rows.
-        bytes: Vec<u8>,
+        /// The rows, in memory that goes back to its pool when the picture is dropped.
+        bytes: PixelBuffer,
     },
     /// A GPU buffer.
     Dmabuf(DmabufFrame),

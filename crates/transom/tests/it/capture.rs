@@ -58,3 +58,34 @@ fn a_waiting_read_steps_over_a_quiet_spell_and_a_timed_read_reports_it() {
     assert!(matches!(timed.next_frame(wait), Ok(Arrival::Quiet)));
     assert!(matches!(timed.next_frame(wait), Err(CaptureError::Ended)));
 }
+
+/// PORTAL-12: a picture's memory goes back to its pool and is used again, clean, within a bound.
+#[test]
+fn the_memory_of_a_picture_is_used_again_clean_and_within_a_bound() {
+    use transom::capture::{FramePool, POOL_KEEP, PixelBuffer};
+
+    let pool = FramePool::new();
+    let mut first = pool.take(1000);
+    first.as_mut_slice().fill(7);
+    let place = first.as_ptr();
+    drop(first);
+    assert_eq!(pool.idle(), 1, "a dropped picture goes home");
+    let second = pool.take(1000);
+    assert_eq!(second.as_ptr(), place, "the same memory comes back");
+    assert!(second.iter().all(|b| *b == 0), "and it is clean");
+    assert_eq!(pool.idle(), 0);
+    drop(second);
+
+    let many: Vec<PixelBuffer> = (0..POOL_KEEP + 2).map(|_| pool.take(64)).collect();
+    drop(many);
+    assert_eq!(pool.idle(), POOL_KEEP, "the pool keeps a few and no more");
+
+    let small = FramePool::new();
+    drop(small.take(100_000));
+    let shrunk = small.take(100);
+    assert_eq!(shrunk.len(), 100);
+    assert_eq!(small.idle(), 0, "memory far larger than needed is let go");
+
+    drop(PixelBuffer::from(vec![1, 2, 3]));
+    assert_eq!(pool.idle(), POOL_KEEP, "a buffer of no pool joins none");
+}

@@ -69,7 +69,7 @@ struct Pending {
     size: PhysicalSizeWire,
     format: PixelFormat,
     stride: u32,
-    bytes: Vec<u8>,
+    bytes: crate::capture::PixelBuffer,
 }
 
 /// What the sink asks of the loop thread.

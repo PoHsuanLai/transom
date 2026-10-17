@@ -15,7 +15,7 @@ fn frame(s: PhysicalSizeWire, ns: u64) -> CapturedFrame {
         data: FrameData::Shm {
             format: PixelFormat::Xrgb8888,
             stride: s.width * 4,
-            bytes: vec![0; (s.width * s.height * 4) as usize],
+            bytes: vec![0; (s.width * s.height * 4) as usize].into(),
         },
         presented_ns: ns,
     }

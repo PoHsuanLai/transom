@@ -270,9 +270,11 @@ Written without a build or a run: nothing here has been compiled. Fixed in trans
 
 - **PORTAL-02, 14, 15** (privileged globals, protocols not served, the accessibility root): a later wave, per the lane
   brief. PORTAL-03 and 10 are closed below (wave 2).
-- **PORTAL-12, reusing the read buffer.** Each frame still allocates a zeroed `Vec`; the sink keeps the `Vec` inside the
-  picture it holds, so reuse needs the sink to hand the buffer back. The size caps bound the churn. Closes with a
-  buffer pool in `PipewireSink` and `Copier::read_frame`.
+- **PORTAL-12, reusing the read buffer.** Closed 2026-10-17: `capture/pool.rs`. `Copier::read_frame` takes its memory
+  from a `FramePool`; the picture carries it as a `PixelBuffer`, which goes back to the pool wherever the picture is
+  finally dropped (the sink replacing it, the stream ending), so the sink needed no change beyond the field's type. The
+  pool keeps `POOL_KEEP` (3) buffers and lets go of one more than twice the size asked for. The size caps still bound
+  a picture.
 - **PORTAL-13, restricting the node's readers.** The node is still an ordinary `Video/Source`; its name is now random
   but the graph lists it. Closes with PipeWire access permissions on the node, once the desktop's PipeWire policy
   decides who may link to a capture node.
