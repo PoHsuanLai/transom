@@ -89,3 +89,64 @@ fn the_memory_of_a_picture_is_used_again_clean_and_within_a_bound() {
     drop(PixelBuffer::from(vec![1, 2, 3]));
     assert_eq!(pool.idle(), POOL_KEEP, "a buffer of no pool joins none");
 }
+
+/// NEW-FA-2: the session's display is first asked of the compositor as a connection of the
+/// portal's own, and the connection it hands out is the one used.
+#[test]
+fn a_connection_the_compositor_hands_out_is_the_way_in() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+    use transom::capture::{DisplayName, FakeLine, Route};
+
+    let line = Arc::new(FakeLine::granting());
+    let display = DisplayName::session().with_portal_line(line.clone());
+    let Route::Handed(fd) = display.route() else {
+        panic!("a granted connection is used");
+    };
+    let mut client = UnixStream::from(fd);
+    let mut server = line.take_server().expect("the compositor's end");
+    client.write_all(b"hello").expect("write");
+    let mut heard = [0_u8; 5];
+    server.read_exact(&mut heard).expect("read");
+    assert_eq!(&heard, b"hello");
+    assert_eq!(line.asked(), 1);
+}
+
+/// (case, the line, how many times it is asked). Whatever the reason, the capture falls back to the
+/// session's own display, as it did before the compositor handed out connections.
+#[test]
+fn no_connection_from_the_compositor_falls_back_to_the_sessions_display() {
+    use std::sync::Arc;
+    use transom::capture::{DisplayName, FakeLine, Route};
+
+    let cases = [
+        ("nobody owns the name", FakeLine::unowned()),
+        ("the compositor refuses", FakeLine::refusing()),
+        ("the compositor does not answer", FakeLine::silent()),
+    ];
+    for (case, line) in cases {
+        let line = Arc::new(line);
+        let display = DisplayName::session().with_portal_line(line.clone());
+        for _ in 0..2 {
+            assert!(matches!(display.route(), Route::Env), "{case}");
+        }
+        assert_eq!(line.asked(), 2, "{case}: asked for each connection");
+    }
+    assert!(matches!(DisplayName::session().route(), Route::Env));
+}
+
+/// A display named by its socket path is used as given; the compositor is not asked.
+#[test]
+fn a_display_named_by_path_is_not_asked_of_the_compositor() {
+    use std::sync::Arc;
+    use transom::capture::{DisplayName, FakeLine, Route};
+
+    let line = Arc::new(FakeLine::granting());
+    let display = DisplayName::at("/run/user/1000/wayland-9").with_portal_line(line.clone());
+    match display.route() {
+        Route::Path(path) => assert_eq!(path, "/run/user/1000/wayland-9"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(line.asked(), 0);
+}

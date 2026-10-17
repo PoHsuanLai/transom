@@ -74,6 +74,10 @@ impl<T: EisHandout + ?Sized> EisHandout for Arc<T> {
 ///
 /// `EndEis(session: t)`: ends every socket handed out for `session`, so its input stops and its
 /// peer sees the connection close. Called when the session is closed.
+///
+/// `Connect(role: s) -> (h)`: a Wayland connection with the role `role`. This portal asks for
+/// `"portal"` for its captures (`capture::CasementLine`): the connection is trusted for the screen
+/// and the windows, so the compositor does not put its own question over the portal's.
 #[zbus::proxy(
     interface = "org.quire.Compositor1",
     default_service = "org.quire.Compositor1",
@@ -83,6 +87,9 @@ impl<T: EisHandout + ?Sized> EisHandout for Arc<T> {
 pub trait Compositor1 {
     /// An EIS socket for a remote-desktop session.
     fn connect_eis(&self, session: u64, devices: u32) -> zbus::Result<zbus::zvariant::OwnedFd>;
+
+    /// A Wayland connection with the role `role`, when the caller holds the role that stands for it.
+    fn connect(&self, role: &str) -> zbus::Result<zbus::zvariant::OwnedFd>;
 
     /// End every socket handed out for a session.
     fn end_eis(&self, session: u64) -> zbus::Result<()>;

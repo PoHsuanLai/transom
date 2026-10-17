@@ -28,7 +28,7 @@ crates/transom/src/{lib, main, error, link, peers, dev_rows (feature debug), she
                    remote_desktop/{mod, book, sessions, object, consent, eis, devices}.rs
                    inhibit/{mod, hub, effect}.rs
                    screencast/{mod, flow, options, run, session, stream, pipewire, pixels, restore}.rs
-                   capture/{mod, fake, output, toplevel, wl}.rs  capture/wl/{outputs, wait}.rs
+                   capture/{mod, display, fake, line, output, toplevel, wl}.rs  capture/line/{casement, fake}.rs  capture/wl/{outputs, wait}.rs
 dist/   quire.portal  quire-portals.conf  org.freedesktop.impl.portal.desktop.quire.service  transom.service
 scripts/install.sh   installs the binary, the unit, the D-Bus file and the portal file (standalone; --prefix, --destdir, --bin-dir)
 dev/    up.sh down.sh lib/{jail,chain}.sh accept/*.sh        (the jailed portal chain)
@@ -50,6 +50,7 @@ scripts/check-boundary.sh
 | `access::Asker` | `ShellAsker` (`org.quire.Shell1.AskPermission`) | `FakeAsker` | transom-access |
 | `remote_desktop::Consent` | `ShellConsent` (its own `AskPermission` question naming the input) | `FakeConsent` | P2-T3 |
 | `remote_desktop::EisHandout` | `CasementEis` (`org.quire.Compositor1.ConnectEis` and `EndEis`) | `FakeEis` | P2-T3 |
+| `capture::PortalLine` | `CasementLine` (`org.quire.Compositor1.Connect("portal")`: a Wayland connection of the portal's own, trusted for the screen and the windows) | `FakeLine` | NEW-FA-2 |
 
 `Pump` (`screencast/stream.rs`) is the loop body between a `CaptureSource` and a `FrameSink`, and
 is implemented and tested against the fakes. A turn waits at most `QUIET_TURN` for a frame and reports
@@ -126,7 +127,7 @@ recognised, every call is refused and the shell is never asked).
 - Counts are capped per caller and in total (`peers::SESSION_LIMITS`, `HOLD_LIMITS`, `MAX_MONITORS`).
   A full book drops sessions that never began and are older than `UNSTARTED_TTL` before it refuses.
 - Every wait on the compositor has a deadline (`capture/wl.rs`: connect, round trip, buffer
-  constraints, first picture), as have the logind and `ConnectEis`/`EndEis` calls. Waits on the person
+  constraints, first picture), as have the logind, `ConnectEis`/`EndEis` and `Connect("portal")` calls. Waits on the person
   (the picker, the sheets) have none. One screenshot is taken at a time, within `SHOT_DEADLINE`.
 - A captured picture is at most 16384 pixels on an edge and 256 MiB; a screenshot canvas at most
   512 MiB. Frame memory is an anonymous memfd, not a file in `/dev/shm`.

@@ -80,6 +80,9 @@ pub struct Parts {
     /// Decides which apps may be remembered; `None` is the real one, built by [`serve`] from the
     /// link and the names (an app that is not shown to be what its id says is asked every time).
     pub prover: Option<Box<dyn app_proof::AppProver>>,
+    /// Where captures connect: the compositor is asked for a connection of the portal's own over
+    /// the bus first ([`Parts::real`]), then the session's display is used.
+    pub display: capture::DisplayName,
     /// The table of the desktop's own programs, which says who the portal frontend and the shell
     /// are. An empty table (the default) recognises nobody, so every call is refused and nobody is
     /// asked.
@@ -106,6 +109,9 @@ impl Parts {
             access: Box::new(access::ShellAsker::new(link.clone())),
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
             names: names::AppNames::none(),
+            display: capture::DisplayName::session().with_portal_line(std::sync::Arc::new(
+                capture::CasementLine::new(link.clone()),
+            )),
             link,
             prover: None,
             callers: peephole_bus::peephole_core::Table::empty(),
@@ -134,6 +140,11 @@ impl Parts {
     /// picker of the screenshot setup).
     pub fn link(&self) -> link::BusLink {
         self.link.clone()
+    }
+
+    /// Where captures connect, for a seam built outside [`Parts::real`] (the screenshots' setup).
+    pub fn display(&self) -> capture::DisplayName {
+        self.display.clone()
     }
 
     /// These parts with screenshots set up as `screenshots` says.
@@ -167,6 +178,7 @@ pub async fn serve_on(
         access,
         screenshots,
         names,
+        display,
         link,
         prover,
         callers,
@@ -175,6 +187,7 @@ pub async fn serve_on(
         prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
     let guard = peers::FrontendOnly::new(link.clone());
     let cast = screencast::ScreenCastService::new(chooser, restore)
+        .with_display(display)
         .with_names(names.clone())
         .with_prover(prover)
         .with_guard(guard.clone());

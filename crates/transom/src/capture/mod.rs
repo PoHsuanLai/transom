@@ -5,7 +5,9 @@
 //! so it works against any compositor that serves them; it picks the output or toplevel flavour.
 //! [`FakeCapture`] serves recorded frames to tests.
 
+mod display;
 mod fake;
+mod line;
 pub mod output;
 mod pool;
 pub mod toplevel;
@@ -18,7 +20,9 @@ use std::time::Duration;
 
 use transom_core::{CastSource, CursorMode, OutputFacts};
 
+pub use display::{DisplayName, Route};
 pub use fake::FakeCapture;
+pub use line::{CasementLine, FakeLine, LINE_DEADLINE, LineError, PortalLine};
 pub use pool::{FramePool, POOL_KEEP, PixelBuffer};
 
 /// A size in physical pixels, as the capture produces it: for a window, logical size times
@@ -177,17 +181,6 @@ pub fn live_sources(display: &DisplayName) -> Result<Vec<CastSource>, CaptureErr
 /// scale. A fresh connection answers each call, so the list is current when it returns.
 pub fn output_facts(display: &DisplayName) -> Result<Vec<OutputFacts>, CaptureError> {
     wl::Link::connect(display)?.output_facts()
-}
-
-/// Which display socket to connect to: empty for the session's own, else an absolute socket path.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DisplayName(pub String);
-
-impl DisplayName {
-    /// The session's own display, found the way Wayland clients find theirs. The name is empty.
-    pub fn session() -> Self {
-        Self(String::new())
-    }
 }
 
 /// The real capture source: a client of the compositor's image-capture protocols.

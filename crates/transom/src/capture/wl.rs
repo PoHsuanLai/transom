@@ -43,7 +43,7 @@ use self::outputs::SeenOutput;
 use self::wait::{Readiness, Waited, Watchdog, readable_within};
 use super::{
     Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, FramePool, PhysicalSizeWire,
-    PixelFormat,
+    PixelFormat, Route,
 };
 
 /// How long the compositor has to accept the connection and list its globals. It does both at
@@ -144,18 +144,21 @@ fn missing(_: BindError) -> CaptureError {
 }
 
 impl Link {
-    /// Connect to the display: the session's own when `display` is empty, else the socket at the
-    /// absolute path it holds.
+    /// Connect to the display: a connection the compositor hands this portal, else the session's
+    /// own when `display` is the session's, else the socket at the absolute path it holds.
     pub fn connect(display: &DisplayName) -> Result<Self, CaptureError> {
-        let conn = if display.0.is_empty() {
-            Connection::connect_to_env().map_err(broken)?
-        } else if Path::new(&display.0).is_absolute() {
-            let stream = UnixStream::connect(&display.0).map_err(broken)?;
-            Connection::from_socket(stream).map_err(broken)?
-        } else {
-            return Err(CaptureError::Connection(
-                "a display name must be a socket path".to_owned(),
-            ));
+        let conn = match display.route() {
+            Route::Handed(fd) => Connection::from_socket(UnixStream::from(fd)).map_err(broken)?,
+            Route::Env => Connection::connect_to_env().map_err(broken)?,
+            Route::Path(path) if Path::new(&path).is_absolute() => {
+                let stream = UnixStream::connect(&path).map_err(broken)?;
+                Connection::from_socket(stream).map_err(broken)?
+            }
+            _ => {
+                return Err(CaptureError::Connection(
+                    "a display name must be a socket path".to_owned(),
+                ));
+            }
         };
         // Listing the globals is a round trip with no deadline of its own: a watchdog cuts the
         // connection if it takes too long, so a stalled compositor fails the call.

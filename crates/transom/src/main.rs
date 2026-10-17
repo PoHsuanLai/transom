@@ -34,7 +34,7 @@ async fn main() -> ExitCode {
     .with_names(app_names())
     .with_callers(callers);
     let parts = {
-        let setup = screenshots(parts.link());
+        let setup = screenshots(parts.link(), parts.display());
         parts.with_screenshots(setup)
     };
     match serve(parts).await {
@@ -154,8 +154,9 @@ fn appearance_file() -> PathBuf {
 /// Screenshots: the compositor the session's own display names (found the way Wayland clients
 /// find theirs), files in `$HOME/Pictures`, named with the time the portal started. The outputs
 /// are asked of the compositor at each screenshot, so a screen plugged in or out is accounted
-/// for. The colour picker is the shell's.
-fn screenshots(link: BusLink) -> ScreenshotSetup {
+/// for. Captures connect on `display`: a connection the compositor hands the portal first, the
+/// session's own display when it hands none. The colour picker is the shell's.
+fn screenshots(link: BusLink, display: DisplayName) -> ScreenshotSetup {
     let pictures = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Pictures"))
         .unwrap_or_default();
@@ -165,8 +166,8 @@ fn screenshots(link: BusLink) -> ScreenshotSetup {
         .unwrap_or_default();
     ScreenshotSetup::new(
         Box::new(OutputGrab::new(
-            Box::new(LiveLayout(DisplayName::session())),
-            Box::new(ExtOpen(DisplayName::session())),
+            Box::new(LiveLayout(display.clone())),
+            Box::new(ExtOpen(display)),
         )),
         pictures,
         stamp,

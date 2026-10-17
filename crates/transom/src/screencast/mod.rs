@@ -89,6 +89,15 @@ impl ScreenCastService {
         self
     }
 
+    /// This service capturing on `display` (the connection the compositor hands this portal, when
+    /// it is set up to ask for one). Call it before the service is shared.
+    pub fn with_display(mut self, display: crate::capture::DisplayName) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.display = display;
+        }
+        self
+    }
+
     /// This service showing apps by the names `names` finds. Call it before the service is shared.
     pub fn with_names(mut self, names: crate::names::AppNames) -> Self {
         if let Some(shared) = Arc::get_mut(&mut self.shared) {

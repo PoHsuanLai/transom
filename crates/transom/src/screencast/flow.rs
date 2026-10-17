@@ -57,7 +57,8 @@ pub(super) struct Shared {
     pub prover: Box<dyn AppProver>,
     /// Held while the token book is read, changed and written, so two Starts do not lose a token.
     book_lock: Mutex<()>,
-    display: DisplayName,
+    /// Where the pictures come from.
+    pub display: DisplayName,
     /// Where apps' own names are found.
     pub names: AppNames,
 }

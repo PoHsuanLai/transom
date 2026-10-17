@@ -393,3 +393,12 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
   before: `org.quire.Compositor1.EndAllEis()`, tolerated when the method or the compositor is absent. The compositor's
   half (the method, or ending a portal's sockets itself when the portal leaves the bus) is casement's; until it lands
   an app of the earlier run keeps its input. Closes when casement has it.
+- **NEW-FA-2: the portal's own capture connection (transom half).** A capture on the session's display (an empty
+  `DisplayName`) first asks `org.quire.Compositor1.Connect("portal")` over the session bus (`capture::CasementLine`, through the
+  connection that owns the portal's name, the way `ConnectEis` is asked, within `LINE_DEADLINE`) and speaks Wayland on the
+  descriptor it gets back (`DisplayName::route` gives `Route::Handed`). casement trusts that connection for the screen and the
+  windows, so its own Screen sheet is no longer raised over the portal's chooser. When nobody owns the name, the call is refused
+  or it times out (another compositor, an older casement), the capture connects the way any Wayland client does (`Route::Env`)
+  and the log says so once. A display named by a socket path is used as given and the compositor is not asked. A call over
+  casement's rate (four a second) is asked once more after a pause. Closes when casement has `Connect("portal")`
+  (casement `fb1-portal-connect`); `desktop/harness/lib/casement-floor.sh` `floor_powers` can then drop its allow row for transom.
