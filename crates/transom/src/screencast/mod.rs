@@ -8,6 +8,7 @@ mod flow;
 pub mod options;
 pub mod pipewire;
 pub use self::pipewire::PipewireSink;
+pub mod grants;
 pub mod pixels;
 pub mod restore;
 pub mod run;
@@ -67,6 +68,16 @@ impl ScreenCastService {
         for key in self.shared.close_for_peer(peer) {
             flow::forget_object(connection, &key).await;
         }
+    }
+
+    /// The service the Settings app lists and takes back what is remembered through, over the
+    /// same book as this one.
+    pub fn grants(
+        &self,
+        guard: crate::peers::SettingsOnly,
+        names: crate::names::AppNames,
+    ) -> grants::GrantsService {
+        grants::GrantsService::new(Arc::clone(&self.shared), guard, names)
     }
 
     /// This service remembering the apps `prover` shows to be what their ids say, and no others.

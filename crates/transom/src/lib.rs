@@ -174,19 +174,19 @@ pub async fn serve_on(
     let prover =
         prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
     let guard = peers::FrontendOnly::new(link.clone());
+    let cast = screencast::ScreenCastService::new(chooser, restore)
+        .with_names(names.clone())
+        .with_prover(prover)
+        .with_guard(guard.clone());
+    let grants = cast.grants(peers::SettingsOnly::new(link.clone()), names.clone());
     let connection = builder
         .serve_at(
             PORTAL_PATH,
             screenshot::ScreenshotService::with_setup(screenshots.with_names(names.clone()))
                 .with_guard(guard.clone()),
         )?
-        .serve_at(
-            PORTAL_PATH,
-            screencast::ScreenCastService::new(chooser, restore)
-                .with_names(names.clone())
-                .with_prover(prover)
-                .with_guard(guard.clone()),
-        )?
+        .serve_at(PORTAL_PATH, cast)?
+        .serve_at(PORTAL_PATH, grants)?
         .serve_at(
             PORTAL_PATH,
             remote_desktop::RemoteDesktopService::new(consent, eis)

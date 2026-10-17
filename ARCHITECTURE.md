@@ -175,6 +175,15 @@ proved `Full`), `peers.who` says who is on it, and:
 `Parts.prover` is `None` in a real run, which `serve` turns into the `PeerProver`; a service built with no prover
 (`ScreenCastService::new`) remembers nobody.
 
+### Taking a remembered share back (NEW-PI-7)
+
+`org.quire.Portal1` is served at the portal's path beside the portal interfaces, over the same book as ScreenCast
+(`screencast/grants.rs`). `ListGrants() -> a(ssut)` gives one entry per app that has a grant still in force: app id,
+the name to show, the persist mode (1 while it runs, 2 until taken back) and the date. `Revoke(app_id: s) -> u` forgets
+every grant of the app and says how many went. Neither names a token. Only the Settings app may call, proved `Full`
+like the frontend (`peers::SettingsOnly`); the Privacy page of Settings (detent) is the person's way in (see the ask in
+FINDINGS). A running share is not stopped by taking back its grant.
+
 ## 5. Window capture
 
 Single windows come from the compositor's `ext_foreign_toplevel_image_capture_source_manager_v1`

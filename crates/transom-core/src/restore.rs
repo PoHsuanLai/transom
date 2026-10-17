@@ -141,6 +141,17 @@ impl Grant {
     }
 }
 
+/// What the person sees of one app's remembered access: no token, nothing secret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remembered {
+    /// The app.
+    pub app_id: String,
+    /// When its newest grant was given, in seconds since the Unix epoch.
+    pub granted_at: u64,
+    /// The longest mode among its grants.
+    pub mode: PersistMode,
+}
+
 /// Every token this portal remembers.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RestoreBook {
@@ -205,6 +216,31 @@ impl RestoreBook {
                 self.grants.remove(&token);
             }
         }
+        before - self.grants.len()
+    }
+
+    /// The apps with a grant that still counts at `now`, one entry each, by app id: what a list
+    /// the person can edit shows. Tokens are not part of it.
+    pub fn remembered(&self, now: u64) -> Vec<Remembered> {
+        let mut by_app: BTreeMap<&str, Remembered> = BTreeMap::new();
+        for grant in self.grants.values().filter(|g| g.valid_at(now)) {
+            let entry = by_app
+                .entry(grant.app_id.as_str())
+                .or_insert_with(|| Remembered {
+                    app_id: grant.app_id.clone(),
+                    granted_at: grant.granted_at,
+                    mode: grant.mode,
+                });
+            entry.granted_at = entry.granted_at.max(grant.granted_at);
+            entry.mode = entry.mode.max(grant.mode);
+        }
+        by_app.into_values().collect()
+    }
+
+    /// Forget every grant of `app_id` (the person took the access back). How many were forgotten.
+    pub fn forget_app(&mut self, app_id: &str) -> usize {
+        let before = self.grants.len();
+        self.grants.retain(|_, grant| grant.app_id != app_id);
         before - self.grants.len()
     }
 

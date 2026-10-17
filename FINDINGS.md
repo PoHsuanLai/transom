@@ -375,3 +375,13 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
   not shown to be its app, which was the point.
   (d) Unverified: that xdg-dbus-proxy's connection reads as the sandboxed app through its own `.flatpak-info`. If it
   reads as a plain program, no Flatpak app is remembered until that is fixed; the failure is asking too often.
+- **NEW-PI-7: revoke path.** `org.quire.Portal1.ListGrants` / `Revoke` (ARCHITECTURE "Taking a remembered share back").
+  The Settings page is detent's; the ask is in the lane report: a "Screen sharing" group on the Privacy page listing
+  `ListGrants` rows (name, date) with a Remove button calling `Revoke(app_id)`, on the name
+  `org.freedesktop.impl.portal.desktop.quire`, path `/org/freedesktop/portal/desktop`. Settings must run as
+  `org.quire.Settings.service` from a root-owned unit with the loader variables unset, or it is proved below `Full`
+  and refused. Closes when detent has the row.
+- **PORTAL-02 rest / NEW-PI-3, transom half.** Nothing in transom trusts a desktop service below `Full`: the frontend,
+  the shell and Settings are all asked for at `Full` (`peers::need`). The one `Proof::Exe` left is the unit manager's
+  own identity (`ManagerCheck::Verified`, role `manager`), which is a program row with no unit and so cannot be proved
+  higher; its answers decide whether others reach `Full`, nothing more.

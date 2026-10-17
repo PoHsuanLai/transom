@@ -176,19 +176,8 @@ impl FrontendOnly {
     /// Let the call with `header` through if it comes from the portal frontend. The result is
     /// the creator to record on a session or request the call opens.
     pub async fn admit(&self, header: &Header<'_>) -> fdo::Result<Creator> {
-        let Some(peers) = self.link.peers() else {
-            tracing::warn!("a call arrived before callers could be told apart, so it is refused");
-            return Err(access_denied(Refused::Unknown));
-        };
-        let wanted = need(roles::PORTAL_FRONTEND);
-        let sender = header.sender().map(|s| s.as_str());
-        match peers.require(sender, &wanted).await {
-            Ok(_) => Ok(Creator::of(header)),
-            Err(refused) => {
-                tracing::warn!(%refused, ?sender, "a call that is not from the portal frontend was refused");
-                Err(access_denied(refused))
-            }
-        }
+        admit_role(&self.link, header, roles::PORTAL_FRONTEND).await?;
+        Ok(Creator::of(header))
     }
 
     /// As [`FrontendOnly::admit`], and the call must also come from `creator`: the peer that
@@ -196,6 +185,43 @@ impl FrontendOnly {
     pub async fn admit_creator(&self, header: &Header<'_>, creator: &Creator) -> fdo::Result<()> {
         self.admit(header).await?;
         creator.require_caller(header)
+    }
+}
+
+/// The guard of the few methods only the Settings app may call (listing and taking back what the
+/// portal remembers): the caller must be Settings, proved `Full` like the frontend. Before
+/// [`crate::serve`] has attached the means of telling callers apart, nobody passes.
+#[derive(Clone, Debug, Default)]
+pub struct SettingsOnly {
+    link: BusLink,
+}
+
+impl SettingsOnly {
+    /// A guard that identifies callers through `link`.
+    pub fn new(link: BusLink) -> Self {
+        Self { link }
+    }
+
+    /// Let the call with `header` through if it comes from the Settings app.
+    pub async fn admit(&self, header: &Header<'_>) -> fdo::Result<()> {
+        admit_role(&self.link, header, roles::SETTINGS).await
+    }
+}
+
+/// `Ok` when the sender of `header` holds `role`, proved as [`need`] says.
+async fn admit_role(link: &BusLink, header: &Header<'_>, role: RoleName) -> fdo::Result<()> {
+    let Some(peers) = link.peers() else {
+        tracing::warn!("a call arrived before callers could be told apart, so it is refused");
+        return Err(access_denied(Refused::Unknown));
+    };
+    let wanted = need(role.clone());
+    let sender = header.sender().map(|s| s.as_str());
+    match peers.require(sender, &wanted).await {
+        Ok(_) => Ok(()),
+        Err(refused) => {
+            tracing::warn!(%refused, ?sender, %role, "a call that is not from the program this method answers was refused");
+            Err(access_denied(refused))
+        }
     }
 }
 

@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use transom_core::{
     CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, Grant, PersistMode, PwNode,
-    RestoreBook, RestoreToken,
+    Remembered, RestoreBook, RestoreToken,
 };
 use zbus::Connection;
 
@@ -417,6 +417,48 @@ impl Shared {
             Ok(()) => Some(token),
             Err(error) => {
                 tracing::warn!(%error, "the restore tokens could not be saved");
+                None
+            }
+        }
+    }
+
+    /// The apps the person has let share without asking again, off the async runtime.
+    pub async fn remembered(self: &Arc<Self>) -> Vec<Remembered> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || this.read_book().remembered(unix_now()))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Take back everything remembered for `app_id`; how many grants went, or `None` when the
+    /// saved book could not be read or written (nothing is then changed).
+    pub async fn revoke(self: &Arc<Self>, app_id: &str) -> Option<usize> {
+        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
+        tokio::task::spawn_blocking(move || this.revoke_now(&app_id))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    fn revoke_now(&self, app_id: &str) -> Option<usize> {
+        let _book = held(&self.book_lock);
+        let mut book = match self.restore.load() {
+            Ok(book) => book,
+            // Nothing readable is nothing remembered; the store set a damaged file aside.
+            Err(StoreError::Damaged) => return Some(0),
+            Err(error) => {
+                tracing::error!(%error, "the saved grants could not be read, so none was taken back");
+                return None;
+            }
+        };
+        let gone = book.forget_app(app_id);
+        if gone == 0 {
+            return Some(0);
+        }
+        match self.restore.save(&book) {
+            Ok(()) => Some(gone),
+            Err(error) => {
+                tracing::error!(%error, "the saved grants could not be written, so none was taken back");
                 None
             }
         }

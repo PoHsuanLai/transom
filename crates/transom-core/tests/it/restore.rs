@@ -1,8 +1,8 @@
 use proptest::prelude::*;
 use transom_core::restore::Grant;
 use transom_core::{
-    CastSource, CursorMode, MAX_GRANTS, PersistMode, RestoreBook, RestoreToken, UNTIL_REVOKED_SECS,
-    WHILE_RUNNING_SECS,
+    CastSource, CursorMode, MAX_GRANTS, PersistMode, Remembered, RestoreBook, RestoreToken,
+    UNTIL_REVOKED_SECS, WHILE_RUNNING_SECS,
 };
 
 const NOW: u64 = 1_800_000_000;
@@ -170,4 +170,67 @@ fn wire_values_round_trip() {
     }
     assert_eq!(CursorMode::from_wire(3), None);
     assert_eq!(CursorMode::from_wire(0), None);
+}
+
+fn grant(app: &str, mode: PersistMode, at: u64) -> Grant {
+    Grant {
+        app_id: app.to_owned(),
+        sources: vec![out("DP-1")],
+        mode,
+        granted_at: at,
+    }
+}
+
+/// NEW-PI-7: the person can see what is remembered, one line per app, and take it back.
+#[test]
+fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
+    let mut book = RestoreBook::new();
+    book.remember(
+        RestoreToken::mint([1; 16]),
+        grant("org.example.Meet", PersistMode::WhileRunning, NOW - 50),
+    );
+    book.remember(
+        RestoreToken::mint([2; 16]),
+        grant("org.example.Meet", PersistMode::UntilRevoked, NOW - 10),
+    );
+    book.remember(
+        RestoreToken::mint([3; 16]),
+        grant("org.example.Rec", PersistMode::UntilRevoked, NOW - 20),
+    );
+    book.remember(
+        RestoreToken::mint([4; 16]),
+        grant(
+            "org.example.Old",
+            PersistMode::UntilRevoked,
+            NOW - UNTIL_REVOKED_SECS - 1,
+        ),
+    );
+    assert_eq!(
+        book.remembered(NOW),
+        vec![
+            Remembered {
+                app_id: "org.example.Meet".to_owned(),
+                granted_at: NOW - 10,
+                mode: PersistMode::UntilRevoked,
+            },
+            Remembered {
+                app_id: "org.example.Rec".to_owned(),
+                granted_at: NOW - 20,
+                mode: PersistMode::UntilRevoked,
+            },
+        ],
+        "one line per app, the newest date, nothing that ran out"
+    );
+    assert_eq!(book.forget_app("org.example.Meet"), 2);
+    assert_eq!(book.forget_app("org.example.Meet"), 0);
+    assert_eq!(book.forget_app(""), 0);
+    let left = book.remembered(NOW);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].app_id, "org.example.Rec");
+    let token = RestoreToken::mint([3; 16]);
+    assert_eq!(
+        book.resolve(&token, "org.example.Rec", &[out("DP-1")], NOW),
+        vec![out("DP-1")],
+        "the other app keeps its grant"
+    );
 }
