@@ -91,7 +91,9 @@ def fake_shell(log_path, answers):
 
 
 # The app id the cast check registers as. A restore grant is kept only for an app with an
-# identity (PORTAL-16), and a host app has one only once it registers it with the portal.
+# identity (PORTAL-16), and a host app has one only once it registers it with the portal; even then
+# it is kept only when the app is shown to be what its id says (NEW-PI-2), which this client, run
+# from the source tree with no desktop entry of root's, never is.
 CAST_APP_ID = "org.quire.CastCheck"
 
 

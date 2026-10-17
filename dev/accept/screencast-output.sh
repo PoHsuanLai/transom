@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Acceptance script 'screencast-output': a PipeWire consumer receives the test pattern of a shared output.
+# Acceptance script 'screencast-output': a PipeWire consumer receives the test pattern of a shared output,
+# and an app not shown to be what its id says is asked every time.
 # Prints PASS, SKIP or FAIL per step. Calls require_jail first.
 #
 # Owner: P2-T2.
@@ -49,15 +50,19 @@ else
   explain_node "$node" | sed 's/^/  graph: /'
 fi
 
+# The test client is a host program whose id no desktop entry of root's registers, so it is not
+# shown to be what its id says (NEW-PI-2): no restore token is issued, and a token it makes up
+# does not skip the sheet. The proven path is covered by transom's own tests, since the jail
+# cannot hold a root-owned desktop entry.
 token=$(cast_field token)
-if [ -n "$token" ]; then step PASS "4 a restore token came back"; else step FAIL "4 no restore token"; status=1; fi
+if [ -z "$token" ]; then step PASS "4 an unproven app got no restore token"; else step FAIL "4 an unproven app was given a restore token"; status=1; fi
 stop_cast
 before=$(grep -c "^pick" "$SHELL_LOG" || true)
-run_cast 1 2 "$token"
+run_cast 1 2 "$(cat /proc/sys/kernel/random/uuid)"
 after=$(grep -c "^pick" "$SHELL_LOG" || true)
-if [ "$(cast_field response)" = 0 ] && [ "$before" = "$after" ]; then
-  step PASS "5 the restore token skipped the chooser"
+if [ "$(cast_field response)" = 0 ] && [ "$after" -gt "$before" ]; then
+  step PASS "5 a token from an unproven app did not skip the chooser"
 else
-  step FAIL "5 the chooser was asked again (picks $before -> $after)"; status=1
+  step FAIL "5 the chooser was skipped for an unproven app (picks $before -> $after)"; status=1
 fi
 exit $status
