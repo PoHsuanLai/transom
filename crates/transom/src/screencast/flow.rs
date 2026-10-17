@@ -19,7 +19,7 @@ use super::run::Share;
 use super::session::{Refusal, Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
 use crate::app_proof::{AppProof, AppProver, NoProof};
-use crate::capture::{self, DisplayName};
+use crate::capture::{DisplayName, Job};
 use crate::chooser::{Chooser, unavailable_is_cancel};
 use crate::names::AppNames;
 use crate::peers::{Creator, Tether};
@@ -160,9 +160,12 @@ impl Shared {
                 _ => return Outcome::Failed,
             }
         };
-        let restored = self.restored(&selection, key, app_id).await;
+        // One job for the whole start: what the restore token is checked against and every stream
+        // opened afterwards use one connection to the compositor, asked for once.
+        let job = Arc::new(Job::new(&self.display));
+        let restored = self.restored(&selection, key, app_id, &job).await;
         let outcome = self
-            .run_machine(key, app_id, &selection, restored, connection)
+            .run_machine(key, app_id, &selection, restored, &job, connection)
             .await;
         if !matches!(outcome, Outcome::Granted(_)) {
             held(&self.shares).remove(key);
@@ -177,6 +180,7 @@ impl Shared {
         app_id: &str,
         selection: &Selection,
         restored: Vec<CastSource>,
+        job: &Arc<Job>,
         connection: &Connection,
     ) -> Outcome {
         let mut cursor = selection
@@ -202,7 +206,7 @@ impl Shared {
                         }
                     },
                     CastOut::OpenStream(sources) => {
-                        match self.open(key, sources, cursor, connection).await {
+                        match self.open(key, sources, cursor, job, connection).await {
                             Some(node) => inputs.push_back(CastIn::NodeReady(node)),
                             None => inputs.push_back(CastIn::StreamFailed),
                         }
@@ -249,6 +253,7 @@ impl Shared {
         key: &SessionKey,
         sources: Vec<CastSource>,
         cursor: transom_core::CursorMode,
+        job: &Arc<Job>,
         connection: &Connection,
     ) -> Option<PwNode> {
         let handle = tokio::runtime::Handle::current();
@@ -260,10 +265,9 @@ impl Shared {
                 handle.spawn(async move { shared.ended(&key, &connection).await });
             }
         };
-        let display = self.display.clone();
+        let job = Arc::clone(job);
         let opened =
-            tokio::task::spawn_blocking(move || Share::open(&display, &sources, cursor, ended))
-                .await;
+            tokio::task::spawn_blocking(move || Share::open(&job, &sources, cursor, ended)).await;
         match opened {
             Ok(Ok(share)) => {
                 let node = share.first_node();
@@ -335,6 +339,7 @@ impl Shared {
         selection: &Selection,
         key: &SessionKey,
         app_id: &str,
+        job: &Arc<Job>,
     ) -> Vec<CastSource> {
         let Some(token) = selection.restore.clone() else {
             return Vec::new();
@@ -342,8 +347,8 @@ impl Shared {
         if app_id.is_empty() || !self.remembers(key, app_id).await {
             return Vec::new();
         }
-        let display = self.display.clone();
-        let live = tokio::task::spawn_blocking(move || capture::live_sources(&display))
+        let job = Arc::clone(job);
+        let live = tokio::task::spawn_blocking(move || job.live_sources())
             .await
             .ok()
             .and_then(Result::ok)

@@ -12,8 +12,8 @@ use crate::remote_desktop::eis::Compositor1Proxy;
 const ROLE: &str = "portal";
 
 /// How long to wait before asking again after the compositor asked to be tried again later. It
-/// counts the calls of one caller in a one-second window, and a screenshot of several outputs
-/// opens several connections at once.
+/// counts the calls of one caller in a one-second window. A capture job asks once, so this is for
+/// several jobs (screenshots, share starts) arriving together.
 const BUSY_PAUSE: Duration = Duration::from_millis(1100);
 
 /// Asks through the connection that owns the portal's name (the compositor tells its caller by

@@ -2,7 +2,7 @@
 
 use transom_core::{Extent, OutputFacts, Point, Turn};
 use wayland_client::protocol::wl_output;
-use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
 use super::{CaptureError, Link, OutputId, Wl, missing};
 
@@ -38,24 +38,31 @@ impl SeenOutput {
 }
 
 impl Link {
-    /// Every output the compositor advertises now, with its place, mode and scale. The position
-    /// is the output's top-left in the compositor's logical space and the scale is the whole
-    /// number `wl_output` reports (a fractional scale is rounded up there).
-    pub fn output_facts(mut self) -> Result<Vec<OutputFacts>, CaptureError> {
-        let advertised: Vec<u32> = self.globals.contents().with_list(|list| {
+    /// Bind every `wl_output` the compositor advertises, each with the name of its global.
+    pub(super) fn bind_outputs(&self) -> Result<Vec<(u32, wl_output::WlOutput)>, CaptureError> {
+        let advertised: Vec<u32> = self.wire.globals.contents().with_list(|list| {
             list.iter()
                 .filter(|g| g.interface == "wl_output")
                 .map(|g| g.name)
                 .collect()
         });
-        let mut bound = Vec::with_capacity(advertised.len());
-        for global in advertised {
-            let output = self
-                .globals
-                .bind::<wl_output::WlOutput, _, _>(&self.qh, 1..=4, OutputId(global))
-                .map_err(missing)?;
-            bound.push(output);
-        }
+        advertised
+            .into_iter()
+            .map(|global| {
+                self.wire
+                    .globals
+                    .bind::<wl_output::WlOutput, _, _>(&self.qh, 1..=4, OutputId(global))
+                    .map(|output| (global, output))
+                    .map_err(missing)
+            })
+            .collect()
+    }
+
+    /// Every output the compositor advertises now, with its place, mode and scale. The position
+    /// is the output's top-left in the compositor's logical space and the scale is the whole
+    /// number `wl_output` reports (a fractional scale is rounded up there).
+    pub fn output_facts(mut self) -> Result<Vec<OutputFacts>, CaptureError> {
+        let bound = self.bind_outputs()?;
         self.roundtrip()?;
         self.roundtrip()?;
         let facts = self
@@ -64,8 +71,16 @@ impl Link {
             .values()
             .filter_map(SeenOutput::facts)
             .collect();
-        drop(bound);
+        release_all(bound.into_iter().map(|(_, output)| output));
         Ok(facts)
+    }
+}
+
+/// Let the compositor drop outputs that were bound only to be read, since the connection outlives
+/// the step. One too old to be released (before version 3) stays until the connection closes.
+pub(super) fn release_all(outputs: impl IntoIterator<Item = wl_output::WlOutput>) {
+    for output in outputs.into_iter().filter(|o| o.version() >= 3) {
+        output.release();
     }
 }
 

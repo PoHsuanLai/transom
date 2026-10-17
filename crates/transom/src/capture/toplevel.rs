@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use transom_core::CursorMode;
 
-use super::wl::{Copier, Link};
+use super::wl::Copier;
 use super::{
-    Arrival, Canceller, CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire,
+    Arrival, Canceller, CaptureError, CaptureSource, CapturedFrame, Job, PhysicalSizeWire,
 };
 
 /// A running capture of one window.
@@ -19,20 +19,21 @@ pub struct ToplevelCapture {
 }
 
 impl ToplevelCapture {
-    /// Connect, find the toplevel with this identifier, create its capture source and session.
-    /// A window that is already gone is [`CaptureError::Ended`]. The pointer is left out.
-    pub fn open(display: &DisplayName, identifier: &str) -> Result<Self, CaptureError> {
-        Self::open_with(display, identifier, CursorMode::Hidden)
+    /// On the connection of `job`, find the toplevel with this identifier, create its capture
+    /// source and session. A window that is already gone is [`CaptureError::Ended`]. The pointer
+    /// is left out.
+    pub fn open(job: &Job, identifier: &str) -> Result<Self, CaptureError> {
+        Self::open_with(job, identifier, CursorMode::Hidden)
     }
 
     /// As [`ToplevelCapture::open`], with the pointer drawn into the picture when `cursor` is
     /// [`CursorMode::Embedded`].
     pub fn open_with(
-        display: &DisplayName,
+        job: &Job,
         identifier: &str,
         cursor: CursorMode,
     ) -> Result<Self, CaptureError> {
-        let mut link = Link::connect(display)?;
+        let mut link = job.link()?;
         let source = link.toplevel_source(identifier)?;
         Ok(Self {
             copier: Copier::start(link, source, cursor)?,

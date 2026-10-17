@@ -150,3 +150,132 @@ fn a_display_named_by_path_is_not_asked_of_the_compositor() {
     }
     assert_eq!(line.asked(), 0);
 }
+
+/// A compositor with nothing to offer: it answers every round trip and ignores the rest, which is
+/// enough for a job to connect, list no outputs and find no capture protocols.
+fn answer_round_trips(mut server: std::os::unix::net::UnixStream) {
+    use std::io::{Read, Write};
+
+    let mut head = [0_u8; 8];
+    while server.read_exact(&mut head).is_ok() {
+        let word =
+            |at: usize| u32::from_ne_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
+        let (object, size, opcode) = (
+            word(0),
+            usize::try_from(word(4) >> 16).unwrap_or(0),
+            word(4) & 0xffff,
+        );
+        let mut body = vec![0_u8; size.saturating_sub(8)];
+        if server.read_exact(&mut body).is_err() {
+            return;
+        }
+        // `wl_display.sync(callback)`: the callback is told it is done.
+        if object == 1 && opcode == 0 && body.len() >= 4 {
+            let mut done = body[..4].to_vec();
+            done.extend_from_slice(&(12_u32 << 16).to_ne_bytes());
+            done.extend_from_slice(&0_u32.to_ne_bytes());
+            if server.write_all(&done).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// A display whose line hands out connections to a compositor that has nothing to offer.
+fn display_behind_a_line() -> (
+    std::sync::Arc<transom::capture::FakeLine>,
+    transom::capture::DisplayName,
+) {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use transom::capture::{DisplayName, FakeLine};
+
+    let line = Arc::new(FakeLine::granting());
+    let waiting = Arc::clone(&line);
+    std::thread::spawn(move || {
+        let give_up = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < give_up {
+            if let Some(server) = waiting.take_server() {
+                return answer_round_trips(server);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let display = DisplayName::session().with_portal_line(line.clone());
+    (line, display)
+}
+
+/// NEW-FA-2 follow-up: the compositor limits how often a caller may ask for a connection, so a job
+/// (a screenshot's look at the outputs and a capture of each, a share's lookups and streams) asks
+/// once, when it first needs one, and every step runs on what it got.
+#[test]
+fn every_step_of_a_job_runs_on_the_one_connection_the_line_hands_out() {
+    use transom::capture::{CaptureError, ExtCapture, Job};
+    use transom_core::CastSource;
+
+    let (line, display) = display_behind_a_line();
+    let job = Job::new(&display);
+    assert_eq!(line.asked(), 0, "nothing is asked before the first step");
+    assert!(job.output_facts().expect("the outputs").is_empty());
+    assert!(job.live_sources().expect("the sources").is_empty());
+    for name in ["A", "B", "C"] {
+        let source = CastSource::Output(name.to_owned());
+        assert!(matches!(
+            ExtCapture::open(&job, &source),
+            Err(CaptureError::Unsupported)
+        ));
+    }
+    assert_eq!(line.asked(), 1, "one connection for the five steps");
+}
+
+/// A screen-cast start with two streams: the lookups and both streams are one job.
+#[test]
+fn a_share_of_two_streams_asks_the_line_once() {
+    use transom::capture::{CaptureError, Job};
+    use transom::screencast::run::{OpenError, Share};
+    use transom_core::{CastSource, CursorMode};
+
+    let (line, display) = display_behind_a_line();
+    let job = Job::new(&display);
+    assert!(job.live_sources().expect("the sources").is_empty());
+    let sources = [
+        CastSource::Output("A".to_owned()),
+        CastSource::Window("w".to_owned()),
+    ];
+    let opened = Share::open(&job, &sources, CursorMode::Hidden, || {});
+    assert!(matches!(
+        opened,
+        Err(OpenError::Capture(CaptureError::Unsupported))
+    ));
+    assert_eq!(line.asked(), 1);
+}
+
+/// Whether a program with no display of its own would find the session's public socket anyway.
+fn public_display_may_exist() -> bool {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var_os("WAYLAND_SOCKET").is_some()
+        || runtime.is_some_and(|dir| dir.join("wayland-0").exists())
+}
+
+/// Where the compositor hands out no connection, the job falls back to the session's public
+/// socket once, not once per step.
+#[test]
+fn a_refused_line_sends_the_whole_job_to_the_public_socket_once() {
+    use std::sync::Arc;
+    use transom::capture::{CaptureError, DisplayName, FakeLine, Job};
+
+    if public_display_may_exist() {
+        eprintln!("skipped: a public Wayland display may be reachable, and tests do not use it");
+        return;
+    }
+    let line = Arc::new(FakeLine::refusing());
+    let job = Job::new(&DisplayName::session().with_portal_line(line.clone()));
+    for _ in 0..3 {
+        assert!(matches!(
+            job.output_facts(),
+            Err(CaptureError::Connection(_))
+        ));
+    }
+    assert_eq!(line.asked(), 1, "the refusal is decided once for the job");
+}

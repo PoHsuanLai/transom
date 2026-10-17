@@ -7,19 +7,18 @@
 
 mod outputs;
 mod wait;
+mod wire;
 
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsFd;
 use std::os::unix::fs::FileExt;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use transom_core::{CastSource, CursorMode};
 use wayland_client::backend::WaylandError;
-use wayland_client::globals::{BindError, GlobalList, GlobalListContents, registry_queue_init};
+use wayland_client::globals::{BindError, GlobalListContents};
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_output, wl_registry, wl_shm, wl_shm_pool,
 };
@@ -39,16 +38,12 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
 };
 
-use self::outputs::SeenOutput;
-use self::wait::{Readiness, Waited, Watchdog, readable_within};
+use self::outputs::{SeenOutput, release_all};
+use self::wait::{Readiness, Waited, readable_within};
+pub(super) use self::wire::Wire;
 use super::{
-    Canceller, CaptureError, CapturedFrame, DisplayName, FrameData, FramePool, PhysicalSizeWire,
-    PixelFormat, Route,
+    Canceller, CaptureError, CapturedFrame, FrameData, FramePool, PhysicalSizeWire, PixelFormat,
 };
-
-/// How long the compositor has to accept the connection and list its globals. It does both at
-/// once; a longer wait means it is stalled (a GPU reset, a frozen session).
-const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// How long it has to answer one round trip.
 const ROUNDTRIP_DEADLINE: Duration = Duration::from_secs(5);
@@ -120,10 +115,11 @@ pub(super) struct Wl {
     frame: FrameState,
 }
 
-/// A connection to the compositor with its event queue.
+/// One capture session's side of a job's connection: its own event queue and the state its
+/// handlers write to. Taking one asks the compositor for nothing, so a job makes as many as it has
+/// steps on the one connection.
 pub(super) struct Link {
-    conn: Connection,
-    globals: GlobalList,
+    wire: Arc<Wire>,
     queue: EventQueue<Wl>,
     qh: QueueHandle<Wl>,
     wl: Wl,
@@ -144,43 +140,15 @@ fn missing(_: BindError) -> CaptureError {
 }
 
 impl Link {
-    /// Connect to the display: a connection the compositor hands this portal, else the session's
-    /// own when `display` is the session's, else the socket at the absolute path it holds.
-    pub fn connect(display: &DisplayName) -> Result<Self, CaptureError> {
-        let conn = match display.route() {
-            Route::Handed(fd) => Connection::from_socket(UnixStream::from(fd)).map_err(broken)?,
-            Route::Env => Connection::connect_to_env().map_err(broken)?,
-            Route::Path(path) if Path::new(&path).is_absolute() => {
-                let stream = UnixStream::connect(&path).map_err(broken)?;
-                Connection::from_socket(stream).map_err(broken)?
-            }
-            _ => {
-                return Err(CaptureError::Connection(
-                    "a display name must be a socket path".to_owned(),
-                ));
-            }
-        };
-        // Listing the globals is a round trip with no deadline of its own: a watchdog cuts the
-        // connection if it takes too long, so a stalled compositor fails the call.
-        let watchdog = Watchdog::arm(&conn, CONNECT_DEADLINE);
-        let listed = registry_queue_init::<Wl>(&conn);
-        drop(watchdog);
-        let (globals, queue) = listed.map_err(broken)?;
-        let qh = queue.handle();
-        Ok(Self {
-            conn,
-            globals,
-            queue,
-            qh,
-            wl: Wl::default(),
-        })
-    }
-
     /// Wait until the compositor has handled everything sent so far, for at most
     /// [`ROUNDTRIP_DEADLINE`].
     pub fn roundtrip(&mut self) -> Result<(), CaptureError> {
         let answered = Arc::new(OnceLock::<()>::new());
-        let _callback = self.conn.display().sync(&self.qh, Arc::clone(&answered));
+        let _callback = self
+            .wire
+            .conn
+            .display()
+            .sync(&self.qh, Arc::clone(&answered));
         let seen = Arc::clone(&answered);
         match self.wait_within(move |_| seen.get().is_some(), ROUNDTRIP_DEADLINE)? {
             Waited::Done => Ok(()),
@@ -198,7 +166,7 @@ impl Link {
         let deadline = Instant::now() + wait;
         loop {
             self.queue.dispatch_pending(&mut self.wl).map_err(broken)?;
-            self.conn.flush().map_err(broken)?;
+            self.wire.conn.flush().map_err(broken)?;
             if done(&self.wl) {
                 return Ok(Waited::Done);
             }
@@ -222,50 +190,31 @@ impl Link {
         }
     }
 
-    /// The output called `name`, once the compositor has told us the names.
+    /// The output called `name`, once the compositor has told us the names. The outputs bound to
+    /// look for it are let go again, since the connection outlives this step.
     pub fn find_output(&mut self, name: &str) -> Result<wl_output::WlOutput, CaptureError> {
-        let advertised: Vec<u32> = self.globals.contents().with_list(|list| {
-            list.iter()
-                .filter(|g| g.interface == "wl_output")
-                .map(|g| g.name)
-                .collect()
-        });
-        let mut bound = Vec::new();
-        for global in advertised {
-            let output = self
-                .globals
-                .bind::<wl_output::WlOutput, _, _>(&self.qh, 1..=4, OutputId(global))
-                .map_err(missing)?;
-            bound.push((global, output));
-        }
+        let bound = self.bind_outputs()?;
         self.roundtrip()?;
-        let found = bound.into_iter().find(|(global, _)| {
+        let (found, others): (Vec<_>, Vec<_>) = bound.into_iter().partition(|(global, _)| {
             self.wl
                 .outputs
                 .get(global)
                 .is_some_and(|o| o.name.as_deref() == Some(name))
         });
-        found.map(|(_, output)| output).ok_or(CaptureError::Ended)
+        release_all(others.into_iter().map(|(_, output)| output));
+        found
+            .into_iter()
+            .next()
+            .map(|(_, output)| output)
+            .ok_or(CaptureError::Ended)
     }
 
     /// Every output and toplevel the compositor lists now.
     pub fn live_sources(mut self) -> Result<Vec<CastSource>, CaptureError> {
-        let advertised: Vec<u32> = self.globals.contents().with_list(|list| {
-            list.iter()
-                .filter(|g| g.interface == "wl_output")
-                .map(|g| g.name)
-                .collect()
-        });
-        let outputs: Vec<_> = advertised
-            .iter()
-            .filter_map(|&global| {
-                self.globals
-                    .bind::<wl_output::WlOutput, _, _>(&self.qh, 1..=4, OutputId(global))
-                    .ok()
-            })
-            .collect();
+        let outputs = self.bind_outputs()?;
         // Without the list global there are no windows to offer, only outputs.
         let list = self
+            .wire
             .globals
             .bind::<ExtForeignToplevelListV1, _, _>(&self.qh, 1..=1, ())
             .ok();
@@ -289,13 +238,14 @@ impl Link {
         if let Some(list) = list {
             list.stop();
         }
-        drop(outputs);
+        release_all(outputs.into_iter().map(|(_, output)| output));
         Ok(sources)
     }
 
     /// The source of the output called `name`.
     pub fn output_source(&mut self, name: &str) -> Result<ExtImageCaptureSourceV1, CaptureError> {
         let manager = self
+            .wire
             .globals
             .bind::<ExtOutputImageCaptureSourceManagerV1, _, _>(&self.qh, 1..=1, ())
             .map_err(missing)?;
@@ -311,10 +261,12 @@ impl Link {
         identifier: &str,
     ) -> Result<ExtImageCaptureSourceV1, CaptureError> {
         let manager = self
+            .wire
             .globals
             .bind::<ExtForeignToplevelImageCaptureSourceManagerV1, _, _>(&self.qh, 1..=1, ())
             .map_err(missing)?;
         let list = self
+            .wire
             .globals
             .bind::<ExtForeignToplevelListV1, _, _>(&self.qh, 1..=1, ())
             .map_err(missing)?;
@@ -378,10 +330,12 @@ impl Copier {
         cursor: CursorMode,
     ) -> Result<Self, CaptureError> {
         let manager = link
+            .wire
             .globals
             .bind::<ExtImageCopyCaptureManagerV1, _, _>(&link.qh, 1..=1, ())
             .map_err(missing)?;
         let shm = link
+            .wire
             .globals
             .bind::<wl_shm::WlShm, _, _>(&link.qh, 1..=1, ())
             .map_err(missing)?;
@@ -418,7 +372,7 @@ impl Copier {
 
     /// A handle that closes the connection from another thread, to unblock [`Copier::frame`].
     pub fn canceller(&self) -> Option<Canceller> {
-        let backend = self.link.conn.backend();
+        let backend = self.link.wire.conn.backend();
         let fd = backend.poll_fd().try_clone_to_owned().ok()?;
         Some(Canceller::new(fd))
     }
@@ -581,7 +535,7 @@ impl Drop for Copier {
             frame.destroy();
         }
         self.session.destroy();
-        let _ = self.link.conn.flush();
+        let _ = self.link.wire.conn.flush();
     }
 }
 

@@ -86,8 +86,10 @@ impl DisplayName {
         }
     }
 
-    /// How to connect now. Asks the line (if there is one) for each connection of the session's
-    /// display, so this blocks until the compositor answers or the deadline passes.
+    /// How to connect now. Asks the line (if there is one) afresh on every call, so this blocks
+    /// until the compositor answers or the deadline passes; it is a call per connection, and the
+    /// compositor limits how often one caller may make it, so a capture job calls it once
+    /// ([`Job`](super::Job)) and runs all its steps on what it gets.
     pub fn route(&self) -> Route {
         match (self.name.as_str(), &self.handout) {
             ("", Some(handout)) => handout.route(),

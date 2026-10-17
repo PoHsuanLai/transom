@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
 use transom::access::{Answer, FakeAsker};
-use transom::capture::{CapturedFrame, FakeCapture, FrameData, PhysicalSizeWire, PixelFormat};
+use transom::capture::{
+    CaptureError, CaptureSource, CapturedFrame, DisplayName, FakeCapture, FrameData, Job,
+    PhysicalSizeWire, PixelFormat,
+};
 use transom::screencast::Dict;
 use transom::screenshot::{
-    FakeColorPicker, FakeOpen, FixedLayout, OutputGrab, OutputPlacement, Placed, ScreenshotService,
-    ScreenshotSetup, ShotError, color_from_wire, compose, file_uri, take,
+    FakeColorPicker, FakeOpen, FixedLayout, OpenCapture, OutputGrab, OutputLayout, OutputPlacement,
+    Placed, ScreenGrab, ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose,
+    file_uri, take,
 };
 use transom::{BoxFuture, chooser::ChooserError};
 use transom_core::{Extent, OutputFacts, Point, Rgb, Turn, arrange};
@@ -110,7 +114,11 @@ fn a_screenshot_is_a_new_png_in_the_pictures_folder() {
         place("B", 8, 0, size(8, 4)),
     ]);
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(Box::new(layout), Box::new(opener))),
+        Box::new(OutputGrab::new(
+            DisplayName::session(),
+            Box::new(layout),
+            Box::new(opener),
+        )),
         pictures.clone(),
         "t".into(),
     );
@@ -207,7 +215,11 @@ fn a_mixed_sharpness_pair_of_screens_becomes_one_picture() {
         .with("B", FakeCapture::solid(size(16, 8), 1));
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(Box::new(layout), Box::new(opener))),
+        Box::new(OutputGrab::new(
+            DisplayName::session(),
+            Box::new(layout),
+            Box::new(opener),
+        )),
         dir.path().to_path_buf(),
         "t".into(),
     );
@@ -300,6 +312,7 @@ async fn a_screenshot_asks_the_person_unless_the_frontend_already_did() {
         let asker = Arc::new(FakeAsker::new(answers));
         let setup = ScreenshotSetup::new(
             Box::new(OutputGrab::new(
+                DisplayName::session(),
                 Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
                 Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
             )),
@@ -324,6 +337,7 @@ async fn with_no_shell_to_ask_an_interactive_screenshot_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
         Box::new(OutputGrab::new(
+            DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
         )),
@@ -344,6 +358,7 @@ fn a_screenshot_is_private_and_whole_under_its_final_name() {
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
         Box::new(OutputGrab::new(
+            DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
         )),
@@ -373,6 +388,7 @@ fn a_taken_name_is_skipped_and_never_overwritten() {
     std::fs::write(pictures.join("Screenshot-t-1.png.part"), b"stale").expect("write");
     let setup = ScreenshotSetup::new(
         Box::new(OutputGrab::new(
+            DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
         )),
@@ -390,4 +406,51 @@ fn a_taken_name_is_skipped_and_never_overwritten() {
         b"stale",
         "somebody else's partial file is left alone"
     );
+}
+
+/// A layout and an opener that note which job they were given.
+#[derive(Clone, Debug, Default)]
+struct JobSpy(Arc<std::sync::Mutex<Vec<usize>>>);
+
+impl JobSpy {
+    fn note(&self, job: &Job) {
+        self.0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(std::ptr::from_ref(job).addr());
+    }
+}
+
+impl OutputLayout for JobSpy {
+    fn outputs(&self, job: &Job) -> Result<Vec<OutputPlacement>, ShotError> {
+        self.note(job);
+        Ok(vec![
+            place("A", 0, 0, size(4, 2)),
+            place("B", 4, 0, size(4, 2)),
+            place("C", 8, 0, size(4, 2)),
+        ])
+    }
+}
+
+impl OpenCapture for JobSpy {
+    fn open(&self, job: &Job, _name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
+        self.note(job);
+        Ok(Box::new(FakeCapture::solid(size(4, 2), 1)))
+    }
+}
+
+/// NEW-FA-2 follow-up: a screenshot of three outputs is one capture job. The layout and every
+/// output's capture are given the same job, so they share the one connection it makes.
+#[test]
+fn a_grab_is_one_job_for_the_layout_and_every_output() {
+    let spy = JobSpy::default();
+    let grab = OutputGrab::new(
+        DisplayName::session(),
+        Box::new(spy.clone()),
+        Box::new(spy.clone()),
+    );
+    assert_eq!(grab.grab().expect("three outputs").len(), 3);
+    let seen = spy.0.lock().unwrap_or_else(|p| p.into_inner());
+    assert_eq!(seen.len(), 4, "the layout and three opens");
+    assert!(seen.iter().all(|job| *job == seen[0]), "all one job");
 }

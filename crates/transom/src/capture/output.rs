@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use transom_core::CursorMode;
 
-use super::wl::{Copier, Link};
+use super::wl::Copier;
 use super::{
-    Arrival, Canceller, CaptureError, CaptureSource, CapturedFrame, DisplayName, PhysicalSizeWire,
+    Arrival, Canceller, CaptureError, CaptureSource, CapturedFrame, Job, PhysicalSizeWire,
 };
 
 /// A running capture of one output.
@@ -17,20 +17,17 @@ pub struct OutputCapture {
 }
 
 impl OutputCapture {
-    /// Connect, find the output called `name`, create its capture source and session, and wait
-    /// for the compositor's buffer constraints. The pointer is left out of the picture.
-    pub fn open(display: &DisplayName, name: &str) -> Result<Self, CaptureError> {
-        Self::open_with(display, name, CursorMode::Hidden)
+    /// On the connection of `job`, find the output called `name`, create its capture source and
+    /// session, and wait for the compositor's buffer constraints. The pointer is left out of the
+    /// picture.
+    pub fn open(job: &Job, name: &str) -> Result<Self, CaptureError> {
+        Self::open_with(job, name, CursorMode::Hidden)
     }
 
     /// As [`OutputCapture::open`], with the pointer drawn into the picture when `cursor` is
     /// [`CursorMode::Embedded`].
-    pub fn open_with(
-        display: &DisplayName,
-        name: &str,
-        cursor: CursorMode,
-    ) -> Result<Self, CaptureError> {
-        let mut link = Link::connect(display)?;
+    pub fn open_with(job: &Job, name: &str, cursor: CursorMode) -> Result<Self, CaptureError> {
+        let mut link = job.link()?;
         let source = link.output_source(name)?;
         Ok(Self {
             copier: Copier::start(link, source, cursor)?,

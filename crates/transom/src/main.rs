@@ -166,8 +166,9 @@ fn screenshots(link: BusLink, display: DisplayName) -> ScreenshotSetup {
         .unwrap_or_default();
     ScreenshotSetup::new(
         Box::new(OutputGrab::new(
-            Box::new(LiveLayout(display.clone())),
-            Box::new(ExtOpen(display)),
+            display,
+            Box::new(LiveLayout),
+            Box::new(ExtOpen),
         )),
         pictures,
         stamp,

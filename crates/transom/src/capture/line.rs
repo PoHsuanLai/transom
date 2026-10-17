@@ -8,6 +8,8 @@
 //! the seam that asks for it, [`CasementLine`] the real one and [`FakeLine`] a test's. When no such
 //! connection can be had (another compositor, an older casement) the capture connects the way any
 //! Wayland client does, and the portal's own sheet is the only question ([`super::DisplayName`]).
+//! The compositor limits how often one caller may ask, so a capture job asks once and runs all its
+//! steps on the connection it gets ([`super::Job`]).
 
 mod casement;
 mod fake;

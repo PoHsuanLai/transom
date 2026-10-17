@@ -402,3 +402,17 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
   and the log says so once. A display named by a socket path is used as given and the compositor is not asked. A call over
   casement's rate (four a second) is asked once more after a pause. Closes when casement has `Connect("portal")`
   (casement `fb1-portal-connect`); `desktop/harness/lib/casement-floor.sh` `floor_powers` can then drop its allow row for transom.
+- **NEW-FA-2 follow-up: one handed connection per capture job.** The first cut asked for a connection at every step: a
+  screenshot asked once for the sources, once for the outputs and once per output captured, a share once per stream. casement
+  limits each bus caller to four `Connect` calls in a one-second window (`CALLS_PER_WINDOW`), so a screenshot of three or more
+  outputs, or a second one straight after, was refused a handed connection part way, fell back to the public socket (where the
+  portal holds no screen power on a real desktop) and failed. Now one capture job (`capture::Job`: a screenshot's grab, or one
+  screen-cast Start with its restore lookups and every stream) asks the line once, on its first step, and runs every step on
+  that connection (`wl::Wire`): the sources, the output facts and each output or window capture, each on an event queue of its
+  own (`wl::Link`) so streams that run at once do not share state. The fall-back to the public socket (no line, or the line
+  refused) is decided once for the job, in `Wire::open`, not per step. A failed connection is remembered by the job, so a
+  retry of a step does not ask again. A share's captures hold the connection open for as long as they run; the job may go.
+  Outputs bound only to be listed are released at the end of the step, since the connection outlives it. Nothing else asks
+  per frame or per retry: `DisplayName::route` is called from `Wire::open` only, and a frame that fails is asked for again on
+  the same session. The one remaining second ask is `CasementLine`'s own pause-and-retry when casement says it is busy, which
+  is for separate jobs arriving together. `Canceller` now cuts the whole job's connection.

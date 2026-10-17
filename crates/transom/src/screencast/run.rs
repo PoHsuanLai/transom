@@ -10,7 +10,7 @@ use transom_core::{CastSource, CursorMode, PwNode};
 use super::PipewireSink;
 use super::options::StreamInfo;
 use super::stream::{FrameSink, Pump, PumpOutcome};
-use crate::capture::{CaptureError, CaptureSource, DisplayName, ExtCapture};
+use crate::capture::{CaptureError, CaptureSource, ExtCapture, Job};
 
 /// Why a share could not be opened.
 #[derive(Debug, thiserror::Error)]
@@ -49,13 +49,14 @@ pub struct Share {
 }
 
 impl Share {
-    /// Open a capture and a PipeWire stream for each source and start moving frames.
+    /// Open a capture and a PipeWire stream for each source and start moving frames. Every stream
+    /// runs on the one connection of `job`, which stays open as long as any of them runs.
     ///
     /// Blocks while connecting; call it off the async runtime. `ended` runs, on the stream's own
     /// thread, when a source goes away by itself (a window closed, a display unplugged); it does
     /// not run for a share that was dropped.
     pub fn open(
-        display: &DisplayName,
+        job: &Job,
         sources: &[CastSource],
         cursor: CursorMode,
         ended: impl Fn() + Send + Clone + 'static,
@@ -70,7 +71,7 @@ impl Share {
         for source in sources {
             share
                 .streams
-                .push(open_one(display, source, cursor, ended.clone())?);
+                .push(open_one(job, source, cursor, ended.clone())?);
         }
         Ok(share)
     }
@@ -100,12 +101,12 @@ impl Drop for Share {
 }
 
 fn open_one(
-    display: &DisplayName,
+    job: &Job,
     source: &CastSource,
     cursor: CursorMode,
     ended: impl Fn() + Send + 'static,
 ) -> Result<Running, OpenError> {
-    let capture = ExtCapture::open_with(display, source, cursor)?;
+    let capture = ExtCapture::open_with(job, source, cursor)?;
     let size = capture.size();
     let sink = PipewireSink::open(size, cursor)?;
     let info = StreamInfo {

@@ -7,6 +7,7 @@
 
 mod display;
 mod fake;
+mod job;
 mod line;
 pub mod output;
 mod pool;
@@ -18,10 +19,11 @@ use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use transom_core::{CastSource, CursorMode, OutputFacts};
+use transom_core::{CastSource, CursorMode};
 
 pub use display::{DisplayName, Route};
 pub use fake::FakeCapture;
+pub use job::Job;
 pub use line::{CasementLine, FakeLine, LINE_DEADLINE, LineError, PortalLine};
 pub use pool::{FramePool, POOL_KEEP, PixelBuffer};
 
@@ -172,17 +174,6 @@ impl Canceller {
     }
 }
 
-/// Every output and window that can be captured now, as the compositor lists them.
-pub fn live_sources(display: &DisplayName) -> Result<Vec<CastSource>, CaptureError> {
-    wl::Link::connect(display)?.live_sources()
-}
-
-/// Every output the compositor lists now: its name, place in the logical space, mode, turn and
-/// scale. A fresh connection answers each call, so the list is current when it returns.
-pub fn output_facts(display: &DisplayName) -> Result<Vec<OutputFacts>, CaptureError> {
-    wl::Link::connect(display)?.output_facts()
-}
-
 /// The real capture source: a client of the compositor's image-capture protocols.
 #[derive(Debug)]
 pub struct ExtCapture {
@@ -196,24 +187,24 @@ enum ExtKind {
 }
 
 impl ExtCapture {
-    /// Connect to `display` and start capturing `source`, with the pointer left out.
-    pub fn open(display: &DisplayName, source: &CastSource) -> Result<Self, CaptureError> {
-        Self::open_with(display, source, CursorMode::Hidden)
+    /// Start capturing `source` on the connection of `job`, with the pointer left out.
+    pub fn open(job: &Job, source: &CastSource) -> Result<Self, CaptureError> {
+        Self::open_with(job, source, CursorMode::Hidden)
     }
 
     /// As [`ExtCapture::open`], with the pointer drawn into the picture when `cursor` is
     /// [`CursorMode::Embedded`]. The metadata mode captures without the pointer.
     pub fn open_with(
-        display: &DisplayName,
+        job: &Job,
         source: &CastSource,
         cursor: CursorMode,
     ) -> Result<Self, CaptureError> {
         let inner = match source {
             CastSource::Output(name) => {
-                ExtKind::Output(output::OutputCapture::open_with(display, name, cursor)?)
+                ExtKind::Output(output::OutputCapture::open_with(job, name, cursor)?)
             }
             CastSource::Window(id) => {
-                ExtKind::Toplevel(toplevel::ToplevelCapture::open_with(display, id, cursor)?)
+                ExtKind::Toplevel(toplevel::ToplevelCapture::open_with(job, id, cursor)?)
             }
             // A kind of source a later transom-core adds and this capture does not know.
             _ => return Err(CaptureError::Unsupported),

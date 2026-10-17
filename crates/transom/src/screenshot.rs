@@ -5,7 +5,8 @@
 //! Only this file names the image encoder.
 //!
 //! `layout` says which outputs there are and where each sits (the real one asks the
-//! compositor each time); `color` is the colour picker the shell shows.
+//! compositor each time); `color` is the colour picker the shell shows. A grab is one capture
+//! [`Job`]: the layout and every output's capture run on the one connection it makes.
 
 mod color;
 mod layout;
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use crate::access::{Asker, NoAsker};
 use crate::capture::{
-    CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData,
+    CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData, Job,
     PhysicalSizeWire, PixelFormat,
 };
 use crate::names::AppNames;
@@ -57,18 +58,18 @@ pub enum ShotError {
 
 /// The seam: how to start capturing one named output.
 pub trait OpenCapture: Send + Sync + std::fmt::Debug {
-    /// A source for the output called `name`.
-    fn open(&self, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError>;
+    /// A source for the output called `name`, on the connection of `job`.
+    fn open(&self, job: &Job, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError>;
 }
 
-/// The real opener: the compositor's image-capture protocols on a display.
-#[derive(Clone, Debug)]
-pub struct ExtOpen(pub DisplayName);
+/// The real opener: the compositor's image-capture protocols on the job's connection.
+#[derive(Clone, Copy, Debug)]
+pub struct ExtOpen;
 
 impl OpenCapture for ExtOpen {
-    fn open(&self, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    fn open(&self, job: &Job, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
         let source = transom_core::CastSource::Output(name.to_owned());
-        Ok(Box::new(ExtCapture::open(&self.0, &source)?))
+        Ok(Box::new(ExtCapture::open(job, &source)?))
     }
 }
 
@@ -95,7 +96,7 @@ impl FakeOpen {
 }
 
 impl OpenCapture for FakeOpen {
-    fn open(&self, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
+    fn open(&self, _job: &Job, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
         self.sources
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -135,27 +136,38 @@ pub trait ScreenGrab: Send + Sync + std::fmt::Debug {
     fn grab(&self) -> Result<Vec<Placed>, ShotError>;
 }
 
-/// Grabs every output of a layout through an opener.
+/// Grabs every output of a layout through an opener, as one capture job on a display.
 #[derive(Debug)]
 pub struct OutputGrab {
+    display: DisplayName,
     layout: Box<dyn OutputLayout>,
     opener: Box<dyn OpenCapture>,
 }
 
 impl OutputGrab {
-    /// A grab of the outputs `layout` lists, opened by `opener`.
-    pub fn new(layout: Box<dyn OutputLayout>, opener: Box<dyn OpenCapture>) -> Self {
-        Self { layout, opener }
+    /// A grab, on `display`, of the outputs `layout` lists, opened by `opener`. Each grab makes
+    /// one [`Job`] and hands it to the layout and to every open, so they share a connection.
+    pub fn new(
+        display: DisplayName,
+        layout: Box<dyn OutputLayout>,
+        opener: Box<dyn OpenCapture>,
+    ) -> Self {
+        Self {
+            display,
+            layout,
+            opener,
+        }
     }
 }
 
 impl ScreenGrab for OutputGrab {
     fn grab(&self) -> Result<Vec<Placed>, ShotError> {
+        let job = Job::new(&self.display);
         self.layout
-            .outputs()?
+            .outputs(&job)?
             .into_iter()
             .map(|place| {
-                let frame = self.opener.open(&place.name)?.frame()?;
+                let frame = self.opener.open(&job, &place.name)?.frame()?;
                 Ok::<_, ShotError>(Placed {
                     x: place.x,
                     y: place.y,
