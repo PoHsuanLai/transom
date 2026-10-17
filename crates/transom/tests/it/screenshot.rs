@@ -29,7 +29,7 @@ fn solid(size: PhysicalSizeWire, format: PixelFormat, pixel: [u8; 4]) -> Capture
         data: FrameData::Shm {
             format,
             stride: size.width * 4,
-            bytes: pixel.repeat((size.width * size.height) as usize),
+            bytes: pixel.repeat((size.width * size.height) as usize).into(),
         },
         presented_ns: 0,
     }
@@ -72,7 +72,7 @@ fn bad_input_is_refused() {
             data: FrameData::Shm {
                 format: PixelFormat::Argb8888,
                 stride: 16,
-                bytes: vec![0; 8],
+                bytes: vec![0; 8].into(),
             },
             presented_ns: 0,
         },
