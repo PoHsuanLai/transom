@@ -15,8 +15,8 @@ pub(super) enum Stage {
     /// The person is being asked. A second `Start` in this stage is refused, so one session never
     /// shows two questions.
     Asking,
-    /// The person allowed it.
-    Started,
+    /// The person allowed it; `socket` says whether the session has taken its input socket.
+    Started { socket: Socket },
 }
 
 /// Whether the session has taken its input socket. A session takes at most one.
@@ -36,7 +36,6 @@ pub(super) struct Entry {
     pub app_id: String,
     pub kinds: DeviceKinds,
     pub stage: Stage,
-    pub socket: Socket,
     /// The peers the session hangs on: when one leaves the bus the session ends.
     pub tether: Tether,
     /// When it was opened.
@@ -90,7 +89,6 @@ impl Book {
                 app_id: app_id.to_owned(),
                 kinds: DeviceKinds::ALL,
                 stage: Stage::Created,
-                socket: Socket::NotYet,
                 tether,
                 opened: now,
             },

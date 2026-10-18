@@ -143,7 +143,11 @@ impl Core {
             return Settled::Gone;
         };
         match verdict {
-            Verdict::Allow => entry.stage = Stage::Started,
+            Verdict::Allow => {
+                entry.stage = Stage::Started {
+                    socket: Socket::NotYet,
+                }
+            }
             Verdict::Retract => entry.stage = Stage::Created,
             Verdict::Decline => {
                 book.entries.remove(key);
@@ -157,14 +161,14 @@ impl Core {
         let (id, kinds) = {
             let mut book = self.lock();
             let entry = book.entries.get_mut(key).ok_or(ConnectError::NoSession)?;
-            if entry.stage != Stage::Started {
+            let Stage::Started { socket } = &mut entry.stage else {
                 return Err(ConnectError::NotAllowed);
-            }
-            if entry.socket == Socket::Handed {
+            };
+            if *socket == Socket::Handed {
                 return Err(ConnectError::AlreadyConnected);
             }
             // Marked before the call so two calls at once cannot both get one.
-            entry.socket = Socket::Handed;
+            *socket = Socket::Handed;
             (entry.id, entry.kinds)
         };
         let handed = self.eis.connect(id, kinds).await;
@@ -178,8 +182,10 @@ impl Core {
                 Err(ConnectError::NoSession)
             }
             Err(error) => {
-                if let Some(entry) = self.lock().entry_mut(key, id) {
-                    entry.socket = Socket::NotYet;
+                if let Some(entry) = self.lock().entry_mut(key, id)
+                    && let Stage::Started { socket } = &mut entry.stage
+                {
+                    *socket = Socket::NotYet;
                 }
                 Err(error.into())
             }
@@ -194,7 +200,14 @@ impl Core {
 
     /// Takes back the socket of a session that has just been removed from the book.
     pub async fn revoke(&self, gone: Option<Entry>) {
-        if let Some(entry) = gone.filter(|entry| entry.socket == Socket::Handed) {
+        if let Some(entry) = gone.filter(|entry| {
+            matches!(
+                entry.stage,
+                Stage::Started {
+                    socket: Socket::Handed
+                }
+            )
+        }) {
             self.eis.end(entry.id).await;
         }
     }
