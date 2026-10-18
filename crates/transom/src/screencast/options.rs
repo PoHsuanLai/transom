@@ -6,13 +6,12 @@
 use std::collections::HashMap;
 
 use transom_core::{
-    CastSource, CursorMode, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
+    CastSource, CursorMode, Extent, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
 };
 use zbus::zvariant::{Array, OwnedValue, Signature, Structure, StructureBuilder, Value};
 
 use super::Dict;
 use super::session::Selection;
-use crate::capture::PhysicalSizeWire;
 
 /// The vendor name in the `restore_data` this portal writes.
 pub const VENDOR: &str = "quire";
@@ -96,7 +95,7 @@ pub struct StreamInfo {
     /// What it shows.
     pub source: CastSource,
     /// Its size in pixels.
-    pub size: PhysicalSizeWire,
+    pub size: Extent,
 }
 
 /// The portal's `source_type` of a source: 1 for a display, 2 for a window.

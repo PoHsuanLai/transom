@@ -3,7 +3,7 @@ use std::sync::Arc;
 use transom::access::{Answer, FakeAsker};
 use transom::capture::{
     CaptureError, CaptureSource, CapturedFrame, DisplayName, FakeCapture, FrameData, Job,
-    PhysicalSizeWire, PixelFormat,
+    PixelFormat,
 };
 use transom::screencast::Dict;
 use transom::screenshot::{
@@ -14,11 +14,11 @@ use transom::screenshot::{
 use transom::{BoxFuture, chooser::ChooserError};
 use transom_core::{Extent, OutputFacts, Point, Rgb, Turn, arrange};
 
-fn size(width: u32, height: u32) -> PhysicalSizeWire {
-    PhysicalSizeWire { width, height }
+fn size(width: u32, height: u32) -> Extent {
+    Extent { width, height }
 }
 
-fn place(name: &str, x: i32, y: i32, covers: PhysicalSizeWire) -> OutputPlacement {
+fn place(name: &str, x: i32, y: i32, covers: Extent) -> OutputPlacement {
     OutputPlacement {
         name: name.into(),
         x,
@@ -27,7 +27,7 @@ fn place(name: &str, x: i32, y: i32, covers: PhysicalSizeWire) -> OutputPlacemen
     }
 }
 
-fn solid(size: PhysicalSizeWire, format: PixelFormat, pixel: [u8; 4]) -> CapturedFrame {
+fn solid(size: Extent, format: PixelFormat, pixel: [u8; 4]) -> CapturedFrame {
     CapturedFrame {
         size,
         data: FrameData::Shm {

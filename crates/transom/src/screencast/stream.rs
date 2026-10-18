@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
-use transom_core::{CursorMode, PwNode};
+use transom_core::{CursorMode, Extent, PwNode};
 
-use crate::capture::{Arrival, CaptureError, CaptureSource, CapturedFrame, PhysicalSizeWire};
+use crate::capture::{Arrival, CaptureError, CaptureSource, CapturedFrame};
 
 /// How long one turn waits for a change before it gives the loop a chance to look around (to
 /// notice it was told to stop).
@@ -34,7 +34,7 @@ pub trait FrameSink: Send + std::fmt::Debug {
     /// buffer free, and again at the stream's pace for as long as nothing newer comes.
     fn push(&mut self, frame: CapturedFrame) -> Result<(), SinkError>;
     /// Tell the sink the stream's size changed (the window was resized).
-    fn resize(&mut self, size: PhysicalSizeWire) -> Result<(), SinkError>;
+    fn resize(&mut self, size: Extent) -> Result<(), SinkError>;
 }
 
 /// What one turn of the pump did.
@@ -56,7 +56,7 @@ pub enum PumpOutcome {
 pub struct Pump<C, S> {
     source: C,
     sink: S,
-    last_size: PhysicalSizeWire,
+    last_size: Extent,
     cursor: CursorMode,
 }
 
@@ -119,7 +119,7 @@ pub struct FakeSink {
     /// The presentation stamps of the frames received, in order.
     pub received: Vec<u64>,
     /// The sizes the sink was resized to, in order.
-    pub resizes: Vec<PhysicalSizeWire>,
+    pub resizes: Vec<Extent>,
 }
 
 impl FakeSink {
@@ -143,7 +143,7 @@ impl FrameSink for FakeSink {
         Ok(())
     }
 
-    fn resize(&mut self, size: PhysicalSizeWire) -> Result<(), SinkError> {
+    fn resize(&mut self, size: Extent) -> Result<(), SinkError> {
         self.resizes.push(size);
         Ok(())
     }

@@ -29,11 +29,11 @@ use pw::spa::pod::serialize::PodSerializer;
 use pw::spa::pod::{ChoiceValue, Object, Pod, Property, Value};
 use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Direction, Fraction, Rectangle, SpaTypes};
 use pw::stream::{StreamFlags, StreamRc, StreamState};
-use transom_core::{CursorMode, FrameRate, Held, PwNode, Step, decide};
+use transom_core::{CursorMode, Extent, FrameRate, Held, PwNode, Step, decide};
 
 use super::pixels::{self, Layout};
 use super::stream::{FrameSink, SinkError};
-use crate::capture::{CapturedFrame, FrameData, PhysicalSizeWire, PixelFormat};
+use crate::capture::{CapturedFrame, FrameData, PixelFormat};
 
 /// How long `open` waits for PipeWire to give the stream a node.
 const READY_WITHIN: Duration = Duration::from_secs(5);
@@ -66,7 +66,7 @@ impl Slot {
 /// A picture of the screen, as the capture produced it.
 #[derive(Debug)]
 struct Pending {
-    size: PhysicalSizeWire,
+    size: Extent,
     format: PixelFormat,
     stride: u32,
     bytes: crate::capture::PixelBuffer,
@@ -75,7 +75,7 @@ struct Pending {
 /// What the sink asks of the loop thread.
 enum Command {
     /// Offer the stream again at a new size.
-    Resize(PhysicalSizeWire),
+    Resize(Extent),
     /// Stop the loop.
     Quit,
 }
@@ -100,7 +100,7 @@ impl std::fmt::Debug for PipewireSink {
 
 impl PipewireSink {
     /// Create the stream at `size` and wait until PipeWire has given it a node id.
-    pub fn open(size: PhysicalSizeWire, cursor: CursorMode) -> Result<Self, SinkError> {
+    pub fn open(size: Extent, cursor: CursorMode) -> Result<Self, SinkError> {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (commands, inbox) = pw::channel::channel::<Command>();
         let latest = Latest::default();
@@ -181,7 +181,7 @@ impl FrameSink for PipewireSink {
         Ok(())
     }
 
-    fn resize(&mut self, size: PhysicalSizeWire) -> Result<(), SinkError> {
+    fn resize(&mut self, size: Extent) -> Result<(), SinkError> {
         if let Ok(mut slot) = self.latest.lock() {
             *slot = Slot::default();
         }
@@ -202,7 +202,7 @@ struct Negotiated {
 
 /// The loop thread: build the stream, report its node, run until told to stop.
 fn run(
-    size: PhysicalSizeWire,
+    size: Extent,
     ready: &mpsc::Sender<Result<u32, String>>,
     inbox: pw::channel::Receiver<Command>,
     latest: Latest,
@@ -213,7 +213,7 @@ fn run(
 }
 
 fn serve(
-    size: PhysicalSizeWire,
+    size: Extent,
     ready: &mpsc::Sender<Result<u32, String>>,
     inbox: pw::channel::Receiver<Command>,
     latest: Latest,
@@ -404,7 +404,7 @@ fn pixel_format(format: VideoFormat) -> Option<PixelFormat> {
 }
 
 /// The formats this stream offers: four 32-bit layouts at one size, any frame rate.
-fn format_pod(size: PhysicalSizeWire) -> Result<Vec<u8>, String> {
+fn format_pod(size: Extent) -> Result<Vec<u8>, String> {
     use pw::spa::pod::property;
     let object = pw::spa::pod::object!(
         SpaTypes::ObjectParamFormat,

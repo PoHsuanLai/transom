@@ -1,6 +1,7 @@
-use transom::capture::{CaptureError, CaptureSource, FakeCapture, FrameData, PhysicalSizeWire};
+use transom::capture::{CaptureError, CaptureSource, FakeCapture, FrameData};
+use transom_core::Extent;
 
-const SIZE: PhysicalSizeWire = PhysicalSizeWire {
+const SIZE: Extent = Extent {
     width: 4,
     height: 2,
 };

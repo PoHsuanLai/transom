@@ -15,7 +15,7 @@ pub struct Point {
 }
 
 /// A width and a height.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Extent {
     /// Width.
     pub width: u32,

@@ -16,7 +16,7 @@ use std::os::unix::fs::FileExt;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use transom_core::{CastSource, CursorMode};
+use transom_core::{CastSource, CursorMode, Extent};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{BindError, GlobalListContents};
 use wayland_client::protocol::{
@@ -41,9 +41,7 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 use self::outputs::{SeenOutput, release_all};
 use self::wait::{Readiness, Waited, readable_within};
 pub(super) use self::wire::Wire;
-use super::{
-    Canceller, CaptureError, CapturedFrame, FrameData, FramePool, PhysicalSizeWire, PixelFormat,
-};
+use super::{Canceller, CaptureError, CapturedFrame, FrameData, FramePool, PixelFormat};
 
 /// How long it has to answer one round trip.
 const ROUNDTRIP_DEADLINE: Duration = Duration::from_secs(5);
@@ -313,7 +311,7 @@ pub(super) struct Copier {
     shm: wl_shm::WlShm,
     buffer: Option<ShmBuffer>,
     generation: u32,
-    size: PhysicalSizeWire,
+    size: Extent,
     /// The frame asked for and not yet answered. It stays open while the picture is still.
     inflight: Option<ExtImageCopyCaptureFrameV1>,
     /// How many answers in a row said to try again.
@@ -352,7 +350,7 @@ impl Copier {
             shm,
             buffer: None,
             generation: 0,
-            size: PhysicalSizeWire {
+            size: Extent {
                 width: 0,
                 height: 0,
             },
@@ -378,7 +376,7 @@ impl Copier {
     }
 
     /// The size the next frame will have.
-    pub fn size(&self) -> PhysicalSizeWire {
+    pub fn size(&self) -> Extent {
         self.size
     }
 
@@ -394,7 +392,7 @@ impl Copier {
         let current = self.link.wl.current.clone().unwrap_or_default();
         let (width, height) = current.size.ok_or(CaptureError::Unsupported)?;
         let format = choose_format(&current.formats).ok_or(CaptureError::Unsupported)?;
-        self.size = PhysicalSizeWire { width, height };
+        self.size = Extent { width, height };
         self.buffer = Some(self.make_buffer(width, height, format)?);
         Ok(())
     }
@@ -515,7 +513,7 @@ impl Copier {
             .read_exact_at(bytes.as_mut_slice(), 0)
             .map_err(broken)?;
         Ok(CapturedFrame {
-            size: PhysicalSizeWire {
+            size: Extent {
                 width: shm.width,
                 height: shm.height,
             },

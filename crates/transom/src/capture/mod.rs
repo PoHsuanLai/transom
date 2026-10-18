@@ -17,7 +17,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use transom_core::{CastSource, CursorMode};
+use transom_core::{CastSource, CursorMode, Extent};
 
 pub use display::{DisplayName, Route};
 pub use fake::FakeCapture;
@@ -26,16 +26,6 @@ pub use line::{CasementLine, FakeLine, LINE_DEADLINE, LineError, PortalLine};
 pub use pool::{FramePool, POOL_KEEP, PixelBuffer};
 
 use wl::Copier;
-
-/// A size in physical pixels, as the capture produces it: for a window, logical size times
-/// scale, rounded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PhysicalSizeWire {
-    /// Width.
-    pub width: u32,
-    /// Height.
-    pub height: u32,
-}
 
 /// A pixel layout, by the Wayland `wl_shm` names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -94,7 +84,7 @@ pub enum FrameData {
 #[derive(Debug)]
 pub struct CapturedFrame {
     /// Its size.
-    pub size: PhysicalSizeWire,
+    pub size: Extent,
     /// Its pixels.
     pub data: FrameData,
     /// Presentation time in nanoseconds on the compositor's clock, as it reported it.
@@ -150,7 +140,7 @@ pub trait CaptureSource: Send + std::fmt::Debug {
         self.frame().map(Arrival::Frame)
     }
     /// The size the next frame will have.
-    fn size(&self) -> PhysicalSizeWire;
+    fn size(&self) -> Extent;
     /// A handle that makes a [`CaptureSource::frame`] call that is blocked return an error, from
     /// any thread. `None` for a source that never blocks.
     fn canceller(&self) -> Option<Canceller> {
@@ -224,7 +214,7 @@ impl CaptureSource for ExtCapture {
         })
     }
 
-    fn size(&self) -> PhysicalSizeWire {
+    fn size(&self) -> Extent {
         self.copier.size()
     }
 

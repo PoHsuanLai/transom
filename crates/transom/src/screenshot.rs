@@ -19,10 +19,12 @@ pub use service::ScreenshotService;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
+use transom_core::Extent;
+
 use crate::access::{Asker, NoAsker};
 use crate::capture::{
     CaptureError, CaptureSource, CapturedFrame, DisplayName, ExtCapture, FrameData, Job,
-    PhysicalSizeWire, PixelFormat,
+    PixelFormat,
 };
 use crate::names::AppNames;
 
@@ -113,7 +115,7 @@ pub struct Placed {
     /// Top edge on the canvas.
     pub y: i32,
     /// The size it covers on the canvas; a frame of another size is stretched to fit.
-    pub size: PhysicalSizeWire,
+    pub size: Extent,
     /// The frame.
     pub frame: CapturedFrame,
 }
@@ -298,7 +300,7 @@ fn paint(
     canvas: &mut [u8],
     canvas_width: usize,
     origin: (usize, usize),
-    size: PhysicalSizeWire,
+    size: Extent,
     frame: &CapturedFrame,
 ) -> Result<(), ShotError> {
     let FrameData::Shm {

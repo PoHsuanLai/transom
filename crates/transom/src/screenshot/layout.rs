@@ -1,9 +1,9 @@
 //! Which outputs a screenshot covers and where each one sits on the canvas.
 
-use transom_core::{Tile, arrange};
+use transom_core::{Extent, Tile, arrange};
 
 use super::ShotError;
-use crate::capture::{Job, PhysicalSizeWire};
+use crate::capture::Job;
 
 /// Where one output sits on the canvas, in pixels (the canvas's origin is the top-left of the
 /// outputs together, so negative coordinates are fine), and the size it covers there. A frame
@@ -17,7 +17,7 @@ pub struct OutputPlacement {
     /// Top edge.
     pub y: i32,
     /// The size it covers.
-    pub size: PhysicalSizeWire,
+    pub size: Extent,
 }
 
 impl From<Tile> for OutputPlacement {
@@ -26,7 +26,7 @@ impl From<Tile> for OutputPlacement {
             name: tile.name,
             x: tile.origin.x,
             y: tile.origin.y,
-            size: PhysicalSizeWire {
+            size: Extent {
                 width: tile.size.width,
                 height: tile.size.height,
             },

@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use transom::capture::PhysicalSizeWire;
 use transom::screencast::Dict;
 use transom::screencast::options::{
     StreamInfo, cursor_modes, granted_results, restore_data, restore_token, selection,
 };
 use transom_core::{
-    CastSource, CursorMode, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
+    CastSource, CursorMode, Extent, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
 };
 use zbus::zvariant::{OwnedValue, Structure, StructureBuilder, Value};
 
@@ -114,7 +113,7 @@ fn a_granted_reply_carries_streams_and_the_kept_token() {
         StreamInfo {
             node: PwNode(41),
             source: CastSource::Output("A".into()),
-            size: PhysicalSizeWire {
+            size: Extent {
                 width: 1920,
                 height: 1080,
             },
@@ -122,7 +121,7 @@ fn a_granted_reply_carries_streams_and_the_kept_token() {
         StreamInfo {
             node: PwNode(42),
             source: CastSource::Window("w".into()),
-            size: PhysicalSizeWire {
+            size: Extent {
                 width: 300,
                 height: 200,
             },

@@ -1,15 +1,15 @@
-use transom::capture::{CapturedFrame, FakeCapture, FrameData, PhysicalSizeWire, PixelFormat};
+use transom::capture::{CapturedFrame, FakeCapture, FrameData, PixelFormat};
 use transom::screencast::stream::{FakeSink, Pump, PumpOutcome};
-use transom_core::{CursorMode, PwNode};
+use transom_core::{CursorMode, Extent, PwNode};
 
-fn size(w: u32, h: u32) -> PhysicalSizeWire {
-    PhysicalSizeWire {
+fn size(w: u32, h: u32) -> Extent {
+    Extent {
         width: w,
         height: h,
     }
 }
 
-fn frame(s: PhysicalSizeWire, ns: u64) -> CapturedFrame {
+fn frame(s: Extent, ns: u64) -> CapturedFrame {
     CapturedFrame {
         size: s,
         data: FrameData::Shm {

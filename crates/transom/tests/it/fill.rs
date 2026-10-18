@@ -1,13 +1,13 @@
 //! The tests the fill lanes un-ignore. Each is written now; the `#[ignore]` names its lane.
 
-use transom::capture::{CaptureSource, FakeCapture, PhysicalSizeWire};
+use transom::capture::{CaptureSource, FakeCapture};
 use transom::screencast::PipewireSink;
 use transom::screencast::restore::{FileStore, RestoreStore};
 use transom::screencast::stream::FrameSink;
 use transom::settings::{AppearanceSource, DesktopAppearance};
 use transom_core::PersistMode;
 use transom_core::restore::Grant;
-use transom_core::{CastSource, CursorMode, RestoreBook, RestoreToken};
+use transom_core::{CastSource, CursorMode, Extent, RestoreBook, RestoreToken};
 
 #[test]
 fn the_desktop_appearance_reads_without_error() {
@@ -45,7 +45,7 @@ fn the_file_store_round_trips_a_book_and_a_missing_file_is_empty() {
 #[test]
 #[ignore = "needs a PipeWire daemon; the jailed portal chain (dev/accept/screencast-*.sh) runs it"]
 fn the_pipewire_sink_accepts_a_run_of_frames() {
-    let size = PhysicalSizeWire {
+    let size = Extent {
         width: 64,
         height: 32,
     };
