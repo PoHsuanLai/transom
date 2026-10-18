@@ -7,22 +7,20 @@ use transom::capture::{
 };
 use transom::screencast::Dict;
 use transom::screenshot::{
-    FakeColorPicker, FakeOpen, FixedLayout, OpenCapture, OutputGrab, OutputLayout, OutputPlacement,
-    Placed, ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose, file_uri,
-    take,
+    FakeColorPicker, FakeOpen, FixedLayout, OpenCapture, OutputGrab, OutputLayout, Placed,
+    ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose, file_uri, take,
 };
 use transom::{BoxFuture, chooser::ShellError};
-use transom_core::{Extent, OutputFacts, Point, Rgb, Turn, arrange};
+use transom_core::{Extent, OutputFacts, Point, Rgb, Tile, Turn, arrange};
 
 fn size(width: u32, height: u32) -> Extent {
     Extent { width, height }
 }
 
-fn place(name: &str, x: i32, y: i32, covers: Extent) -> OutputPlacement {
-    OutputPlacement {
+fn place(name: &str, x: i32, y: i32, covers: Extent) -> Tile {
+    Tile {
         name: name.into(),
-        x,
-        y,
+        origin: Point { x, y },
         size: covers,
     }
 }
@@ -43,13 +41,11 @@ fn solid(size: Extent, format: PixelFormat, pixel: [u8; 4]) -> CapturedFrame {
 fn two_outputs_side_by_side_make_one_canvas() {
     let shots = [
         Placed::unscaled(
-            0,
-            0,
+            Point { x: 0, y: 0 },
             solid(size(2, 2), PixelFormat::Xrgb8888, [10, 20, 30, 0]),
         ),
         Placed::unscaled(
-            2,
-            1,
+            Point { x: 2, y: 1 },
             solid(size(2, 1), PixelFormat::Xbgr8888, [10, 20, 30, 0]),
         ),
     ];
@@ -69,8 +65,7 @@ fn two_outputs_side_by_side_make_one_canvas() {
 fn bad_input_is_refused() {
     assert!(matches!(compose(&[]), Err(ShotError::NoOutputs)));
     let short = Placed::unscaled(
-        0,
-        0,
+        Point { x: 0, y: 0 },
         CapturedFrame {
             size: size(4, 4),
             data: FrameData::Shm {
@@ -144,14 +139,12 @@ fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 fn a_frame_is_stretched_to_the_place_it_covers() {
     // A one-pixel frame enlarged to 2x2, beside a 2x2 frame that already fits.
     let mut shots = vec![Placed {
-        x: 0,
-        y: 0,
+        origin: Point { x: 0, y: 0 },
         size: size(2, 2),
         frame: solid(size(1, 1), PixelFormat::Xbgr8888, [1, 2, 3, 0]),
     }];
     shots.push(Placed::unscaled(
-        2,
-        0,
+        Point { x: 2, y: 0 },
         solid(size(2, 2), PixelFormat::Xbgr8888, [9, 8, 7, 0]),
     ));
     let canvas = compose(&shots).expect("compose");
@@ -165,8 +158,7 @@ fn a_frame_is_stretched_to_the_place_it_covers() {
     }
     // A frame larger than its place is shrunk the same way.
     let shrunk = [Placed {
-        x: 0,
-        y: 0,
+        origin: Point { x: 0, y: 0 },
         size: size(1, 1),
         frame: solid(size(4, 4), PixelFormat::Xbgr8888, [5, 5, 5, 0]),
     }];
@@ -200,12 +192,7 @@ fn a_mixed_sharpness_pair_of_screens_becomes_one_picture() {
             scale: 2,
         },
     ];
-    let layout = FixedLayout(
-        arrange(&facts)
-            .into_iter()
-            .map(OutputPlacement::from)
-            .collect(),
-    );
+    let layout = FixedLayout(arrange(&facts));
     let opener = FakeOpen::new()
         .with("A", FakeCapture::solid(size(8, 4), 1))
         .with("B", FakeCapture::solid(size(16, 8), 1));
@@ -414,7 +401,7 @@ impl JobSpy {
 }
 
 impl OutputLayout for JobSpy {
-    fn outputs(&self, job: &Job) -> Result<Vec<OutputPlacement>, ShotError> {
+    fn outputs(&self, job: &Job) -> Result<Vec<Tile>, ShotError> {
         self.note(job);
         Ok(vec![
             place("A", 0, 0, size(4, 2)),

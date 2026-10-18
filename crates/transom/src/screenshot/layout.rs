@@ -1,51 +1,22 @@
 //! Which outputs a screenshot covers and where each one sits on the canvas.
 
-use transom_core::{Extent, Tile, arrange};
+use transom_core::{Tile, arrange};
 
 use super::ShotError;
 use crate::capture::Job;
 
-/// Where one output sits on the canvas, in pixels (the canvas's origin is the top-left of the
-/// outputs together, so negative coordinates are fine), and the size it covers there. A frame
-/// of another size is stretched to fit, so screens of different sharpness share one picture.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputPlacement {
-    /// The output's name, as the capture opens it.
-    pub name: String,
-    /// Left edge.
-    pub x: i32,
-    /// Top edge.
-    pub y: i32,
-    /// The size it covers.
-    pub size: Extent,
-}
-
-impl From<Tile> for OutputPlacement {
-    fn from(tile: Tile) -> Self {
-        Self {
-            name: tile.name,
-            x: tile.origin.x,
-            y: tile.origin.y,
-            size: Extent {
-                width: tile.size.width,
-                height: tile.size.height,
-            },
-        }
-    }
-}
-
 /// The seam: which outputs exist and where they sit.
 pub trait OutputLayout: Send + Sync + std::fmt::Debug {
-    /// Every output, with its place, asking on the connection of `job`.
-    fn outputs(&self, job: &Job) -> Result<Vec<OutputPlacement>, ShotError>;
+    /// Every output as a tile (its place on the canvas, negative coordinates allowed, and the size it covers; a frame of another size is stretched to fit, so screens of different sharpness share one picture), asking on the connection of `job`.
+    fn outputs(&self, job: &Job) -> Result<Vec<Tile>, ShotError>;
 }
 
 /// A layout given up front.
 #[derive(Clone, Debug, Default)]
-pub struct FixedLayout(pub Vec<OutputPlacement>);
+pub struct FixedLayout(pub Vec<Tile>);
 
 impl OutputLayout for FixedLayout {
-    fn outputs(&self, _job: &Job) -> Result<Vec<OutputPlacement>, ShotError> {
+    fn outputs(&self, _job: &Job) -> Result<Vec<Tile>, ShotError> {
         Ok(self.0.clone())
     }
 }
@@ -57,11 +28,8 @@ impl OutputLayout for FixedLayout {
 pub struct LiveLayout;
 
 impl OutputLayout for LiveLayout {
-    fn outputs(&self, job: &Job) -> Result<Vec<OutputPlacement>, ShotError> {
+    fn outputs(&self, job: &Job) -> Result<Vec<Tile>, ShotError> {
         let facts = job.output_facts()?;
-        Ok(arrange(&facts)
-            .into_iter()
-            .map(OutputPlacement::from)
-            .collect())
+        Ok(arrange(&facts))
     }
 }

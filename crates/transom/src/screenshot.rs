@@ -13,13 +13,13 @@ mod layout;
 mod service;
 
 pub use color::{ColorPicker, FakeColorPicker, NoColorPicker, ShellColorPicker, color_from_wire};
-pub use layout::{FixedLayout, LiveLayout, OutputLayout, OutputPlacement};
+pub use layout::{FixedLayout, LiveLayout, OutputLayout};
 pub use service::ScreenshotService;
 
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
-use transom_core::Extent;
+use transom_core::{Extent, Point, Tile};
 
 use crate::access::{Asker, NoAsker};
 use crate::capture::{
@@ -110,10 +110,8 @@ impl OpenCapture for FakeOpen {
 /// A frame and the place of its output.
 #[derive(Debug)]
 pub struct Placed {
-    /// Left edge on the canvas.
-    pub x: i32,
-    /// Top edge on the canvas.
-    pub y: i32,
+    /// Top-left on the canvas.
+    pub origin: Point,
     /// The size it covers on the canvas; a frame of another size is stretched to fit.
     pub size: Extent,
     /// The frame.
@@ -121,11 +119,10 @@ pub struct Placed {
 }
 
 impl Placed {
-    /// A frame at `(x, y)` covering exactly its own size.
-    pub fn unscaled(x: i32, y: i32, frame: CapturedFrame) -> Self {
+    /// A frame at `origin` covering exactly its own size.
+    pub fn unscaled(origin: Point, frame: CapturedFrame) -> Self {
         Self {
-            x,
-            y,
+            origin,
             size: frame.size,
             frame,
         }
@@ -163,12 +160,11 @@ impl OutputGrab {
         self.layout
             .outputs(&job)?
             .into_iter()
-            .map(|place| {
-                let frame = self.opener.open(&job, &place.name)?.frame()?;
+            .map(|Tile { name, origin, size }| {
+                let frame = self.opener.open(&job, &name)?.frame()?;
                 Ok::<_, ShotError>(Placed {
-                    x: place.x,
-                    y: place.y,
-                    size: place.size,
+                    origin,
+                    size,
                     frame,
                 })
             })
@@ -248,19 +244,19 @@ const MAX_PIXELS: u64 = 1 << 27;
 
 /// Lay `shots` out on one opaque canvas at their places.
 pub fn compose(shots: &[Placed]) -> Result<Canvas, ShotError> {
-    let left = shots.iter().map(|s| i64::from(s.x)).min();
-    let top = shots.iter().map(|s| i64::from(s.y)).min();
+    let left = shots.iter().map(|s| i64::from(s.origin.x)).min();
+    let top = shots.iter().map(|s| i64::from(s.origin.y)).min();
     let (Some(left), Some(top)) = (left, top) else {
         return Err(ShotError::NoOutputs);
     };
     let right = shots
         .iter()
-        .map(|s| i64::from(s.x) + i64::from(s.size.width))
+        .map(|s| i64::from(s.origin.x) + i64::from(s.size.width))
         .max()
         .unwrap_or(left);
     let bottom = shots
         .iter()
-        .map(|s| i64::from(s.y) + i64::from(s.size.height))
+        .map(|s| i64::from(s.origin.y) + i64::from(s.size.height))
         .max()
         .unwrap_or(top);
     let width = u32::try_from(right - left).map_err(|_| ShotError::TooLarge)?;
@@ -272,8 +268,8 @@ pub fn compose(shots: &[Placed]) -> Result<Canvas, ShotError> {
     let mut rgba = vec![0u8; usize::try_from(pixels * 4).map_err(|_| ShotError::TooLarge)?];
     for shot in shots {
         let origin = (
-            usize::try_from(i64::from(shot.x) - left).map_err(|_| ShotError::TooLarge)?,
-            usize::try_from(i64::from(shot.y) - top).map_err(|_| ShotError::TooLarge)?,
+            usize::try_from(i64::from(shot.origin.x) - left).map_err(|_| ShotError::TooLarge)?,
+            usize::try_from(i64::from(shot.origin.y) - top).map_err(|_| ShotError::TooLarge)?,
         );
         paint(&mut rgba, width as usize, origin, shot.size, &shot.frame)?;
     }
