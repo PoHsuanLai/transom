@@ -1,6 +1,6 @@
 //! `org.freedesktop.impl.portal.Screenshot`: a picture of the screen, and a colour picked from it.
 //!
-//! A screenshot grabs one frame of every output through the [`ScreenGrab`] seam, lays the frames
+//! A screenshot grabs one frame of every output through [`OutputGrab`], lays the frames
 //! out on one canvas, encodes a PNG and writes it into the pictures folder the service was given.
 //! Only this file names the image encoder.
 //!
@@ -132,12 +132,6 @@ impl Placed {
     }
 }
 
-/// The seam: one frame of every output.
-pub trait ScreenGrab: Send + Sync + std::fmt::Debug {
-    /// Grab the screens.
-    fn grab(&self) -> Result<Vec<Placed>, ShotError>;
-}
-
 /// Grabs every output of a layout through an opener, as one capture job on a display.
 #[derive(Debug)]
 pub struct OutputGrab {
@@ -162,8 +156,9 @@ impl OutputGrab {
     }
 }
 
-impl ScreenGrab for OutputGrab {
-    fn grab(&self) -> Result<Vec<Placed>, ShotError> {
+impl OutputGrab {
+    /// Grab the screens: one frame of every output.
+    pub fn grab(&self) -> Result<Vec<Placed>, ShotError> {
         let job = Job::new(&self.display);
         self.layout
             .outputs(&job)?
@@ -181,20 +176,11 @@ impl ScreenGrab for OutputGrab {
     }
 }
 
-/// The grab of a service nobody set up: it has no screens.
-#[derive(Debug)]
-struct Unconfigured;
-
-impl ScreenGrab for Unconfigured {
-    fn grab(&self) -> Result<Vec<Placed>, ShotError> {
-        Err(ShotError::NoOutputs)
-    }
-}
-
 /// What a service needs to take screenshots: the grab, the folder and a stamp for file names.
 #[derive(Debug)]
 pub struct ScreenshotSetup {
-    grab: Box<dyn ScreenGrab>,
+    /// `None` for a service nobody set up: it has no screens.
+    grab: Option<OutputGrab>,
     pictures: PathBuf,
     stamp: String,
     picker: Box<dyn ColorPicker>,
@@ -205,7 +191,11 @@ pub struct ScreenshotSetup {
 impl ScreenshotSetup {
     /// Screenshots from `grab`, written into the absolute folder `pictures`; `stamp` (a date and
     /// time the caller drew) goes into every file name.
-    pub fn new(grab: Box<dyn ScreenGrab>, pictures: PathBuf, stamp: String) -> Self {
+    pub fn new(grab: OutputGrab, pictures: PathBuf, stamp: String) -> Self {
+        Self::with_grab(Some(grab), pictures, stamp)
+    }
+
+    fn with_grab(grab: Option<OutputGrab>, pictures: PathBuf, stamp: String) -> Self {
         Self {
             grab,
             pictures,
@@ -237,7 +227,7 @@ impl ScreenshotSetup {
 
     /// A setup with no screens: every screenshot fails.
     pub fn unconfigured() -> Self {
-        Self::new(Box::new(Unconfigured), PathBuf::new(), String::new())
+        Self::with_grab(None, PathBuf::new(), String::new())
     }
 }
 
@@ -383,7 +373,9 @@ pub fn take(setup: &ScreenshotSetup, seq: u32) -> Result<PathBuf, ShotError> {
     if !setup.pictures.is_absolute() {
         return Err(ShotError::RelativePath);
     }
-    let png = encode_png(compose(&setup.grab.grab()?)?)?;
+    let png = encode_png(compose(
+        &setup.grab.as_ref().ok_or(ShotError::NoOutputs)?.grab()?,
+    )?)?;
     std::fs::create_dir_all(&setup.pictures)?;
     for n in seq..seq.saturating_add(NAME_TRIES) {
         let path = setup

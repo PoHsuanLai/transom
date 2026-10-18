@@ -8,8 +8,8 @@ use transom::capture::{
 use transom::screencast::Dict;
 use transom::screenshot::{
     FakeColorPicker, FakeOpen, FixedLayout, OpenCapture, OutputGrab, OutputLayout, OutputPlacement,
-    Placed, ScreenGrab, ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose,
-    file_uri, take,
+    Placed, ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose, file_uri,
+    take,
 };
 use transom::{BoxFuture, chooser::ShellError};
 use transom_core::{Extent, OutputFacts, Point, Rgb, Turn, arrange};
@@ -114,11 +114,7 @@ fn a_screenshot_is_a_new_png_in_the_pictures_folder() {
         place("B", 8, 0, size(8, 4)),
     ]);
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
-            DisplayName::session(),
-            Box::new(layout),
-            Box::new(opener),
-        )),
+        OutputGrab::new(DisplayName::session(), Box::new(layout), Box::new(opener)),
         pictures.clone(),
         "t".into(),
     );
@@ -215,11 +211,7 @@ fn a_mixed_sharpness_pair_of_screens_becomes_one_picture() {
         .with("B", FakeCapture::solid(size(16, 8), 1));
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
-            DisplayName::session(),
-            Box::new(layout),
-            Box::new(opener),
-        )),
+        OutputGrab::new(DisplayName::session(), Box::new(layout), Box::new(opener)),
         dir.path().to_path_buf(),
         "t".into(),
     );
@@ -311,11 +303,11 @@ async fn a_screenshot_asks_the_person_unless_the_frontend_already_did() {
         let dir = tempfile::tempdir().expect("tempdir");
         let asker = Arc::new(FakeAsker::new(answers));
         let setup = ScreenshotSetup::new(
-            Box::new(OutputGrab::new(
+            OutputGrab::new(
                 DisplayName::session(),
                 Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
                 Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
-            )),
+            ),
             dir.path().join("Pictures"),
             "t".into(),
         )
@@ -336,11 +328,11 @@ async fn a_screenshot_asks_the_person_unless_the_frontend_already_did() {
 async fn with_no_shell_to_ask_an_interactive_screenshot_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
+        OutputGrab::new(
             DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
-        )),
+        ),
         dir.path().join("Pictures"),
         "t".into(),
     );
@@ -357,11 +349,11 @@ fn a_screenshot_is_private_and_whole_under_its_final_name() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().expect("tempdir");
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
+        OutputGrab::new(
             DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
-        )),
+        ),
         dir.path().join("Pictures"),
         "t".into(),
     );
@@ -387,11 +379,11 @@ fn a_taken_name_is_skipped_and_never_overwritten() {
     // A leftover of a crashed run sits where the next name's partial file would go.
     std::fs::write(pictures.join("Screenshot-t-1.png.part"), b"stale").expect("write");
     let setup = ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
+        OutputGrab::new(
             DisplayName::session(),
             Box::new(FixedLayout(vec![place("A", 0, 0, size(4, 2))])),
             Box::new(FakeOpen::new().with("A", FakeCapture::solid(size(4, 2), 1))),
-        )),
+        ),
         pictures.clone(),
         "t".into(),
     );

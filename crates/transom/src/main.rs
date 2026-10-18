@@ -165,11 +165,7 @@ fn screenshots(link: BusLink, display: DisplayName) -> ScreenshotSetup {
         .map(|d| d.as_secs().to_string())
         .unwrap_or_default();
     ScreenshotSetup::new(
-        Box::new(OutputGrab::new(
-            display,
-            Box::new(LiveLayout),
-            Box::new(ExtOpen),
-        )),
+        OutputGrab::new(display, Box::new(LiveLayout), Box::new(ExtOpen)),
         pictures,
         stamp,
     )
