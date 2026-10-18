@@ -109,9 +109,8 @@ pub enum Step {
 /// repeat goes out only once a full gap has passed since the last send.
 pub fn decide(held: Held, gap_ns: u64) -> Step {
     match held {
-        Held::Nothing => Step::Hold,
         Held::Unsent => Step::SendNew,
         Held::Sent { ago_ns } if ago_ns >= gap_ns => Step::SendAgain,
-        Held::Sent { .. } => Step::Hold,
+        Held::Nothing | Held::Sent { .. } => Step::Hold,
     }
 }

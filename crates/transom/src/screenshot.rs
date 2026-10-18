@@ -89,7 +89,7 @@ impl FakeOpen {
     pub fn with(self, name: &str, source: impl CaptureSource + 'static) -> Self {
         self.sources
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(name.to_owned(), Box::new(source));
         self
     }
@@ -99,7 +99,7 @@ impl OpenCapture for FakeOpen {
     fn open(&self, _job: &Job, name: &str) -> Result<Box<dyn CaptureSource>, CaptureError> {
         self.sources
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(name)
             .ok_or(CaptureError::Ended)
     }

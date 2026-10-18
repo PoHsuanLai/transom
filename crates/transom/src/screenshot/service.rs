@@ -138,12 +138,9 @@ impl ScreenshotService {
             let path = take(&setup, seq)?;
             file_uri(&path)
         });
-        let made = match tokio::time::timeout(SHOT_DEADLINE, work).await {
-            Ok(joined) => joined,
-            Err(_) => {
-                tracing::warn!("a screenshot took too long");
-                return (RESPONSE_FAILED, Dict::new());
-            }
+        let Ok(made) = tokio::time::timeout(SHOT_DEADLINE, work).await else {
+            tracing::warn!("a screenshot took too long");
+            return (RESPONSE_FAILED, Dict::new());
         };
         match made {
             Ok(Ok(uri)) => {

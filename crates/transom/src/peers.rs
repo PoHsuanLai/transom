@@ -215,7 +215,7 @@ async fn admit_role(link: &BusLink, header: &Header<'_>, role: RoleName) -> fdo:
         return Err(access_denied(Refused::Unknown));
     };
     let wanted = need(role.clone());
-    let sender = header.sender().map(|s| s.as_str());
+    let sender = header.sender().map(zbus::names::UniqueName::as_str);
     match peers.require(sender, &wanted).await {
         Ok(_) => Ok(()),
         Err(refused) => {
@@ -274,8 +274,14 @@ pub async fn spawn_watch(connection: &Connection) -> Result<(), TransomError> {
         let mut changes = pin!(changes);
         while let Some(change) = poll_fn(|cx| changes.as_mut().poll_next(cx)).await {
             let Ok(args) = change.args() else { continue };
-            let old = args.old_owner().as_ref().map(|o| o.as_str());
-            let new = args.new_owner().as_ref().map(|o| o.as_str());
+            let old = args
+                .old_owner()
+                .as_ref()
+                .map(zbus::names::UniqueName::as_str);
+            let new = args
+                .new_owner()
+                .as_ref()
+                .map(zbus::names::UniqueName::as_str);
             if let Some(peer) = departed(args.name().as_str(), old, new) {
                 release(&connection, &peer).await;
             }

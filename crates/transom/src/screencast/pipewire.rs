@@ -443,7 +443,7 @@ fn format_pod(size: PhysicalSizeWire) -> Result<Vec<u8>, String> {
             }
         ),
     );
-    serialize(Value::Object(object))
+    serialize(&Value::Object(object))
 }
 
 /// The buffers this stream wants at a negotiated size: one memory block per buffer, shared
@@ -479,11 +479,11 @@ fn buffers_pod(size: Rectangle) -> Result<Vec<u8>, String> {
             ),
         ],
     };
-    serialize(Value::Object(object))
+    serialize(&Value::Object(object))
 }
 
-fn serialize(value: Value) -> Result<Vec<u8>, String> {
-    PodSerializer::serialize(Cursor::new(Vec::new()), &value)
+fn serialize(value: &Value) -> Result<Vec<u8>, String> {
+    PodSerializer::serialize(Cursor::new(Vec::new()), value)
         .map(|(cursor, _)| cursor.into_inner())
         .map_err(|error| format!("{error:?}"))
 }

@@ -72,13 +72,12 @@ impl LogindInhibitor {
             self.lock = None;
             return Ok(());
         }
-        let connection = match &self.connection {
-            Some(c) => c.clone(),
-            None => {
-                let c = zbus::Connection::system().await.map_err(|e| session(&e))?;
-                self.connection = Some(c.clone());
-                c
-            }
+        let connection = if let Some(c) = &self.connection {
+            c.clone()
+        } else {
+            let c = zbus::Connection::system().await.map_err(|e| session(&e))?;
+            self.connection = Some(c.clone());
+            c
         };
         let reply = connection
             .call_method(
@@ -131,7 +130,7 @@ impl InhibitEffect for FakeEffect {
     fn apply(&mut self, active: InhibitFlags) -> BoxFuture<'_, Result<(), EffectError>> {
         self.applied
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(active);
         Box::pin(std::future::ready(Ok(())))
     }

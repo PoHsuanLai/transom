@@ -264,7 +264,9 @@ impl SettingsService {
     }
 
     fn last(&self) -> std::sync::MutexGuard<'_, Option<Appearance>> {
-        self.last.lock().unwrap_or_else(|p| p.into_inner())
+        self.last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The appearance now, remembered as what apps last saw. When the document cannot be read the

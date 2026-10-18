@@ -64,7 +64,7 @@ impl Watchdog {
         std::thread::Builder::new()
             .name("transom-watchdog".to_owned())
             .spawn(move || {
-                if let Err(mpsc::RecvTimeoutError::Timeout) = armed.recv_timeout(deadline) {
+                if armed.recv_timeout(deadline) == Err(mpsc::RecvTimeoutError::Timeout) {
                     canceller.cancel();
                 }
             })
