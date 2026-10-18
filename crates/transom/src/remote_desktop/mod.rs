@@ -39,13 +39,9 @@ pub use self::sessions::ConnectError;
 use self::sessions::{Core, Settled, Verdict};
 use crate::names::AppNames;
 use crate::peers::{FrontendOnly, Tether};
+use crate::response::Response;
 use crate::screencast::Dict;
 use crate::screencast::session::{Refusal, SessionKey};
-
-/// The portal's response codes.
-const GRANTED: u32 = 0;
-const CANCELLED: u32 = 1;
-const FAILED: u32 = 2;
 
 /// The answer to a call: the portal's response code and its results.
 pub type Reply = (u32, Dict);
@@ -96,7 +92,7 @@ impl RemoteDesktopService {
     /// fails, and so does a full book.
     pub fn create(&self, key: SessionKey, app_id: &str) -> Reply {
         match self.create_for(key, app_id, Tether::default()) {
-            Ok(_) => (GRANTED, Dict::new()),
+            Ok(_) => Response::granted().into_wire(),
             Err(_) => failed(),
         }
     }
@@ -143,7 +139,7 @@ impl RemoteDesktopService {
             .and_then(|value| value.downcast_ref::<u32>().ok())
             .map_or(DeviceKinds::ALL, DeviceKinds::from_wire);
         match self.core.select(key, wanted) {
-            Settled::Applied => (GRANTED, Dict::new()),
+            Settled::Applied => Response::granted().into_wire(),
             Settled::Gone => failed(),
         }
     }
@@ -164,14 +160,14 @@ impl RemoteDesktopService {
                     if let Some(devices) = owned(asking.kinds.to_wire()) {
                         results.insert("devices".to_owned(), devices);
                     }
-                    (GRANTED, results)
+                    Response::Granted(results).into_wire()
                 }
                 // Closed while the person was deciding.
-                Settled::Gone => (CANCELLED, Dict::new()),
+                Settled::Gone => Response::Cancelled.into_wire(),
             },
             Ok(_) => {
                 settle(Verdict::Decline);
-                (CANCELLED, Dict::new())
+                Response::Cancelled.into_wire()
             }
             Err(error) => {
                 tracing::warn!(%error, "remote control could not be asked about");
@@ -220,7 +216,7 @@ impl RemoteDesktopService {
 }
 
 fn failed() -> Reply {
-    (FAILED, Dict::new())
+    Response::Failed.into_wire()
 }
 
 fn owned(value: u32) -> Option<OwnedValue> {
@@ -262,11 +258,11 @@ impl RemoteDesktopService {
                 for old in dropped {
                     let _ = server.remove::<SessionObject, _>(old.0.as_str()).await;
                 }
-                (GRANTED, Dict::new())
+                Response::granted().into_wire()
             }
             Err(_) => failed(),
         };
-        if reply.0 == GRANTED {
+        if reply.0 == Response::GRANTED {
             let object =
                 SessionObject::new(Arc::clone(&self.core), key.clone(), self.guard.clone());
             // `Ok(false)`: another portal interface already serves this handle's session object,

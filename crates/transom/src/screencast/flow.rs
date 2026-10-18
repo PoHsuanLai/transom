@@ -23,28 +23,7 @@ use crate::capture::{DisplayName, Job};
 use crate::chooser::{Chooser, unavailable_is_cancel};
 use crate::names::AppNames;
 use crate::peers::{Creator, Tether};
-
-/// The answer to a Start call, before it becomes wire values.
-#[derive(Debug)]
-pub(super) enum Outcome {
-    /// Sharing began; the reply's results.
-    Granted(Dict),
-    /// The person said no.
-    Cancelled,
-    /// Something broke.
-    Failed,
-}
-
-impl Outcome {
-    /// The portal's response code and results: 0 granted, 1 cancelled, 2 failed.
-    pub fn into_wire(self) -> (u32, Dict) {
-        match self {
-            Self::Granted(results) => (0, results),
-            Self::Cancelled => (1, Dict::new()),
-            Self::Failed => (2, Dict::new()),
-        }
-    }
-}
+use crate::response::Response;
 
 /// Everything the interface and the session objects share.
 #[derive(Debug)]
@@ -149,7 +128,7 @@ impl Shared {
         key: &SessionKey,
         app_id: &str,
         connection: &Connection,
-    ) -> Outcome {
+    ) -> Response {
         let selection = {
             let sessions = held(&self.sessions);
             match sessions.get(key) {
@@ -157,7 +136,7 @@ impl Shared {
                     .selection
                     .clone()
                     .unwrap_or_else(|| options::selection(&Dict::new())),
-                _ => return Outcome::Failed,
+                _ => return Response::Failed,
             }
         };
         // One job for the whole start: what the restore token is checked against and every stream
@@ -167,7 +146,7 @@ impl Shared {
         let outcome = self
             .run_machine(key, app_id, &selection, restored, &job, connection)
             .await;
-        if !matches!(outcome, Outcome::Granted(_)) {
+        if !matches!(outcome, Response::Granted(_)) {
             held(&self.shares).remove(key);
             forget_object(connection, key).await;
         }
@@ -182,14 +161,14 @@ impl Shared {
         restored: Vec<CastSource>,
         job: &Arc<Job>,
         connection: &Connection,
-    ) -> Outcome {
+    ) -> Response {
         let mut cursor = selection
             .cursor_modes
             .first()
             .copied()
             .unwrap_or(transom_core::CursorMode::Hidden);
         let mut inputs = VecDeque::from([CastIn::Start { restored }]);
-        let mut outcome = Outcome::Failed;
+        let mut outcome = Response::Failed;
         while let Some(input) = inputs.pop_front() {
             let outs = held(&self.sessions).apply(key, input);
             for out in outs {
@@ -202,7 +181,7 @@ impl Shared {
                         Ok(None) => inputs.push_back(CastIn::Picked(Vec::new())),
                         Err(()) => {
                             held(&self.sessions).apply(key, CastIn::Close);
-                            return Outcome::Failed;
+                            return Response::Failed;
                         }
                     },
                     CastOut::OpenStream(sources) => {
@@ -292,11 +271,11 @@ impl Shared {
         app_id: &str,
         selection: &Selection,
         reply: CastReply,
-    ) -> Outcome {
+    ) -> Response {
         match reply {
             CastReply::Granted { sources, .. } => {
                 let Some(streams) = held(&self.shares).get(key).map(Share::infos) else {
-                    return Outcome::Failed;
+                    return Response::Failed;
                 };
                 let kept = match selection.persist {
                     PersistMode::DoNot => None,
@@ -308,15 +287,15 @@ impl Shared {
                 };
                 let kept = kept.as_ref().map(|token| (selection.persist, token));
                 match options::granted_results(&streams, kept) {
-                    Ok(results) => Outcome::Granted(results),
+                    Ok(results) => Response::Granted(results),
                     Err(error) => {
                         tracing::warn!(%error, "the reply could not be built");
-                        Outcome::Failed
+                        Response::Failed
                     }
                 }
             }
-            CastReply::Cancelled => Outcome::Cancelled,
-            _ => Outcome::Failed,
+            CastReply::Cancelled => Response::Cancelled,
+            _ => Response::Failed,
         }
     }
 

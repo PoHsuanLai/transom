@@ -15,6 +15,7 @@ use crate::chooser::ShellError;
 use crate::link::BusLink;
 use crate::names::{AppNames, Layout, tidy_to};
 use crate::peers::FrontendOnly;
+use crate::response::Response;
 use crate::screencast::Dict;
 use crate::shell::{Door, answered};
 
@@ -22,12 +23,6 @@ use crate::shell::{Door, answered};
 const GRANT_LABEL: &str = "Allow";
 /// The button that says no, when the app's request names none.
 const DENY_LABEL: &str = "Don\u{2019}t Allow";
-
-/// The portal's response codes.
-const RESPONSE_GRANTED: u32 = 0;
-const RESPONSE_DENIED: u32 = 1;
-const RESPONSE_DISMISSED: u32 = 1;
-const RESPONSE_ENDED: u32 = 2;
 
 /// What the person did with the question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,9 +52,8 @@ impl Answer {
     /// (xdg-desktop-portal reads 1 as cancelled by the user; 2 is any other end).
     pub fn response(self) -> u32 {
         match self {
-            Self::Granted => RESPONSE_GRANTED,
-            Self::Denied => RESPONSE_DENIED,
-            Self::Dismissed => RESPONSE_DISMISSED,
+            Self::Granted => Response::GRANTED,
+            Self::Denied | Self::Dismissed => Response::CANCELLED,
         }
     }
 }
@@ -72,11 +66,11 @@ pub fn response_of(asked: &Result<Answer, ShellError>) -> u32 {
         Ok(answer) => answer.response(),
         Err(error) if error.is_refusal() => {
             tracing::warn!(%error, "the shell could not be asked, so the answer is no");
-            RESPONSE_DENIED
+            Response::CANCELLED
         }
         Err(error) => {
             tracing::warn!(%error, "the question could not be asked");
-            RESPONSE_ENDED
+            Response::FAILED
         }
     }
 }

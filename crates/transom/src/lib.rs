@@ -35,6 +35,7 @@ pub mod names;
 pub mod peers;
 pub(crate) mod random;
 pub mod remote_desktop;
+pub mod response;
 pub mod screencast;
 pub mod screenshot;
 pub mod settings;

@@ -13,13 +13,9 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use super::{ScreenshotSetup, file_uri, take};
 use crate::access::{Question, response_of};
 use crate::peers::FrontendOnly;
+use crate::response::Response;
 use crate::screencast::Dict;
 use crate::settings::wire_value;
-
-/// The portal's response codes.
-const RESPONSE_OK: u32 = 0;
-const RESPONSE_CANCELLED: u32 = 1;
-const RESPONSE_FAILED: u32 = 2;
 
 /// The longest a whole screenshot may take, from the grab to the file. Each step has a deadline of
 /// its own; this is the sum with room to spare, so an answer always comes.
@@ -117,14 +113,14 @@ impl ScreenshotService {
         if asks(options) == Asks::Backend {
             let question = screenshot_question(&self.setup.names.label(app_id));
             let code = response_of(&self.setup.asker.ask(&question).await);
-            if code != RESPONSE_OK {
+            if code != Response::GRANTED {
                 return (code, Dict::new());
             }
         }
         // Another screenshot is being taken: refuse this one at once rather than queue it.
         let Ok(permit) = Arc::clone(&self.one_at_a_time).try_acquire_owned() else {
             tracing::warn!("a screenshot was asked for while another was being taken");
-            return (RESPONSE_FAILED, Dict::new());
+            return Response::Failed.into_wire();
         };
         let setup = Arc::clone(&self.setup);
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -137,7 +133,7 @@ impl ScreenshotService {
         });
         let Ok(made) = tokio::time::timeout(SHOT_DEADLINE, work).await else {
             tracing::warn!("a screenshot took too long");
-            return (RESPONSE_FAILED, Dict::new());
+            return Response::Failed.into_wire();
         };
         match made {
             Ok(Ok(uri)) => {
@@ -145,15 +141,15 @@ impl ScreenshotService {
                 if let Some(v) = owned(uri) {
                     results.insert("uri".to_owned(), v);
                 }
-                (RESPONSE_OK, results)
+                Response::Granted(results).into_wire()
             }
             Ok(Err(error)) => {
                 tracing::warn!(%error, "a screenshot failed");
-                (RESPONSE_FAILED, Dict::new())
+                Response::Failed.into_wire()
             }
             Err(error) => {
                 tracing::warn!(%error, "the screenshot task did not finish");
-                (RESPONSE_FAILED, Dict::new())
+                Response::Failed.into_wire()
             }
         }
     }
@@ -202,18 +198,18 @@ impl ScreenshotService {
                     Some(value) => {
                         let mut results = Dict::new();
                         results.insert("color".to_owned(), value);
-                        (RESPONSE_OK, results)
+                        Response::Granted(results).into_wire()
                     }
-                    None => (RESPONSE_FAILED, Dict::new()),
+                    None => Response::Failed.into_wire(),
                 },
-                Ok(None) => (RESPONSE_CANCELLED, Dict::new()),
+                Ok(None) => Response::Cancelled.into_wire(),
                 Err(error) if error.is_refusal() => {
                     tracing::warn!(%error, "no colour picker could be asked");
-                    (RESPONSE_CANCELLED, Dict::new())
+                    Response::Cancelled.into_wire()
                 }
                 Err(error) => {
                     tracing::warn!(%error, "the colour picker failed");
-                    (RESPONSE_FAILED, Dict::new())
+                    Response::Failed.into_wire()
                 }
             },
         )

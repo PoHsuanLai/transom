@@ -24,6 +24,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue};
 
 use crate::chooser::Chooser;
 use crate::peers::{FrontendOnly, Tether};
+use crate::response::Response;
 use flow::Shared;
 use restore::RestoreStore;
 use session::SessionKey;
@@ -161,7 +162,7 @@ impl ScreenCastService {
                     flow::forget_object(connection, &old).await;
                 }
             }
-            Err(_) => return Ok((2, Dict::new())),
+            Err(_) => return Ok(Response::Failed.into_wire()),
         }
         let object = SessionObject {
             key: key.clone(),
@@ -170,13 +171,13 @@ impl ScreenCastService {
         };
         if server.at(session_handle.as_str(), object).await.is_err() {
             self.shared.close(&key);
-            return Ok((2, Dict::new()));
+            return Ok(Response::Failed.into_wire());
         }
         let mut results = Dict::new();
         if let Ok(id) = OwnedValue::try_from(zbus::zvariant::Value::new(key.0)) {
             results.insert("session_id".to_owned(), id);
         }
-        Ok((0, results))
+        Ok(Response::Granted(results).into_wire())
     }
 
     /// Record `types`, `multiple`, `cursor_mode`, `persist_mode` and `restore_data`.
@@ -193,8 +194,8 @@ impl ScreenCastService {
         self.admit_for(&header, &key).await?;
         let selection = options::selection(&options);
         Ok(match self.shared.select(&key, app_id, selection) {
-            true => (0, Dict::new()),
-            false => (2, Dict::new()),
+            true => Response::granted().into_wire(),
+            false => Response::Failed.into_wire(),
         })
     }
 
