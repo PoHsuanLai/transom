@@ -137,7 +137,11 @@ impl PeerProver {
 impl PeerProver {
     /// As [`PeerProver::new`], with `root` deciding which files are root's.
     pub fn with_root(link: BusLink, names: AppNames, root: impl RootHeld + 'static) -> Self {
-        Self { link, names, root: Box::new(root) }
+        Self {
+            link,
+            names,
+            root: Box::new(root),
+        }
     }
 }
 

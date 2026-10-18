@@ -49,4 +49,3 @@ pub trait PortalLine: Send + Sync + fmt::Debug {
     /// compositor answers, for at most [`LINE_DEADLINE`].
     fn open(&self) -> Result<OwnedFd, LineError>;
 }
-
