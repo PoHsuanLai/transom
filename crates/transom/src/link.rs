@@ -10,7 +10,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::chooser::ChooserError;
+use crate::chooser::ShellError;
 use crate::peers::Peers;
 
 /// A shared, set-once handle to the name-owning connection.
@@ -32,11 +32,11 @@ impl BusLink {
     }
 
     /// The name-owning connection, or why there is none yet.
-    pub fn connection(&self) -> Result<zbus::Connection, ChooserError> {
+    pub fn connection(&self) -> Result<zbus::Connection, ShellError> {
         self.connection
             .get()
             .cloned()
-            .ok_or_else(|| ChooserError::Call("the portal is not on the bus yet".to_owned()))
+            .ok_or_else(|| ShellError::Call("the portal is not on the bus yet".to_owned()))
     }
 
     /// Attach the means of identifying callers. Only the first is kept.

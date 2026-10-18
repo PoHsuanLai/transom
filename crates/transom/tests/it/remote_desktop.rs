@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use transom::BoxFuture;
 use transom::access::{Answer, Asker, FakeAsker, Question};
-use transom::chooser::ChooserError;
+use transom::chooser::ShellError;
 use transom::peers::Tether;
 use transom::remote_desktop::{
     ConnectError, Consent, ConsentAnswer, ConsentError, DeviceKinds, FakeConsent, FakeEis,
@@ -192,8 +192,8 @@ async fn the_shell_consent_asks_its_own_question_naming_the_input() {
 struct Absent;
 
 impl Asker for Absent {
-    fn ask<'a>(&'a self, _: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
-        Box::pin(async { Err(ChooserError::Unavailable) })
+    fn ask<'a>(&'a self, _: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>> {
+        Box::pin(async { Err(ShellError::Unavailable) })
     }
 }
 

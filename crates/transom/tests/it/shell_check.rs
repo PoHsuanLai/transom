@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use peephole_bus::peephole::fake::introduced_program;
 use transom::access::{Answer, Asker, Question, ShellAsker, response_of};
-use transom::chooser::ChooserError;
+use transom::chooser::ShellError;
 use transom::shell::SHELL_NAME;
 use zbus::Connection;
 use zbus::zvariant::OwnedValue;
@@ -81,7 +81,7 @@ fn question() -> Question {
     )
 }
 
-async fn ask(asker: &ShellAsker) -> Result<Answer, ChooserError> {
+async fn ask(asker: &ShellAsker) -> Result<Answer, ShellError> {
     tokio::time::timeout(SETTLE, asker.ask(&question()))
         .await
         .expect("answered in time")
@@ -97,7 +97,7 @@ async fn only_the_shell_is_asked_and_a_squatter_is_not() {
     // Nobody owns the shell's name: nobody is asked, and that is a no.
     let nobody = ask(&asker).await;
     assert!(
-        nobody.as_ref().is_err_and(ChooserError::is_refusal),
+        nobody.as_ref().is_err_and(ShellError::is_refusal),
         "{nobody:?}"
     );
 
@@ -110,7 +110,7 @@ async fn only_the_shell_is_asked_and_a_squatter_is_not() {
     );
     let refused = ask(&asker).await;
     assert!(
-        matches!(refused, Err(ChooserError::NotTheShell)),
+        matches!(refused, Err(ShellError::NotTheShell)),
         "{refused:?}"
     );
     assert_eq!(
@@ -142,7 +142,7 @@ async fn only_the_shell_is_asked_and_a_squatter_is_not() {
     );
     let after_restart = ask(&asker).await;
     assert!(
-        matches!(after_restart, Err(ChooserError::NotTheShell)),
+        matches!(after_restart, Err(ShellError::NotTheShell)),
         "{after_restart:?}"
     );
     assert_eq!(asked_shell.load(Ordering::SeqCst), 1);
@@ -180,10 +180,7 @@ async fn a_question_ends_as_a_no_when_the_shell_changes_while_it_is_open() {
         .expect("the shell lets go of its name");
 
     let ended = open.await.expect("the question task");
-    assert!(
-        matches!(ended, Err(ChooserError::ShellChanged)),
-        "{ended:?}"
-    );
+    assert!(matches!(ended, Err(ShellError::ShellChanged)), "{ended:?}");
     assert_eq!(response_of(&ended), 1, "an ended question is a no");
 }
 

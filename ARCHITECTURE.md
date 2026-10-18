@@ -99,8 +99,8 @@ recognised, every call is refused and the shell is never asked).
 - **Outbound.** `shell::Door::open` runs once per question: subscribe to changes of the owner of `org.quire.Shell`,
   require that the owner holds role `shell`, proved `Full`, and address the question to that owner's unique name.
   Nothing is cached, so a shell restart is seen by the next question. `shell::answered` ends a question that is open
-  when the name changes hands (`ChooserError::ShellChanged`). A name nobody owns, an owner that is not the shell and a
-  bus that does not answer are `ChooserError::NotTheShell`. `ChooserError::is_refusal` groups these with
+  when the name changes hands (`ShellError::ShellChanged`). A name nobody owns, an owner that is not the shell and a
+  bus that does not answer are `ShellError::NotTheShell`. `ShellError::is_refusal` groups these with
   `Unavailable`: the picker is a cancel, a sheet is a no, remote control grants nothing. Picker, sheets and colour
   picker all go through `Door`.
 - **The person's own rows (feature `debug`).** The desktop's test jail has no `/etc/quire/desktop-callers.toml` and no

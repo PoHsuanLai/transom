@@ -11,7 +11,7 @@ use std::sync::{Mutex, PoisonError};
 use zbus::zvariant::ObjectPath;
 
 use crate::BoxFuture;
-use crate::chooser::ChooserError;
+use crate::chooser::ShellError;
 use crate::link::BusLink;
 use crate::names::{AppNames, Layout, tidy_to};
 use crate::peers::FrontendOnly;
@@ -67,7 +67,7 @@ impl Answer {
 /// The portal's response code for what asking came to. A shell nobody can reach has been asked
 /// nothing and nobody said yes, so that is a no; any other failure ends the question some other
 /// way.
-pub fn response_of(asked: &Result<Answer, ChooserError>) -> u32 {
+pub fn response_of(asked: &Result<Answer, ShellError>) -> u32 {
     match asked {
         Ok(answer) => answer.response(),
         Err(error) if error.is_refusal() => {
@@ -152,11 +152,11 @@ impl Question {
 /// The seam: show the question and return what the person did.
 pub trait Asker: Send + Sync + std::fmt::Debug {
     /// Ask and wait.
-    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>>;
+    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>>;
 }
 
 impl<T: Asker + ?Sized> Asker for std::sync::Arc<T> {
-    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
+    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>> {
         (**self).ask(question)
     }
 }
@@ -176,7 +176,7 @@ impl ShellAsker {
 }
 
 impl Asker for ShellAsker {
-    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
+    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>> {
         Box::pin(async move {
             let Door { shell, mut watch } = Door::open(&self.link).await?;
             let value = answered(
@@ -191,7 +191,7 @@ impl Asker for ShellAsker {
                 ),
             )
             .await?;
-            Answer::from_wire(value).ok_or(ChooserError::BadAnswer)
+            Answer::from_wire(value).ok_or(ShellError::BadAnswer)
         })
     }
 }
@@ -202,8 +202,8 @@ impl Asker for ShellAsker {
 pub struct NoAsker;
 
 impl Asker for NoAsker {
-    fn ask<'a>(&'a self, _: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
-        Box::pin(async { Err(ChooserError::Unavailable) })
+    fn ask<'a>(&'a self, _: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>> {
+        Box::pin(async { Err(ShellError::Unavailable) })
     }
 }
 
@@ -236,7 +236,7 @@ impl FakeAsker {
 }
 
 impl Asker for FakeAsker {
-    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ChooserError>> {
+    fn ask<'a>(&'a self, question: &'a Question) -> BoxFuture<'a, Result<Answer, ShellError>> {
         self.asked
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

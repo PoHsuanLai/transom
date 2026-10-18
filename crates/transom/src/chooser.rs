@@ -12,10 +12,10 @@ use crate::BoxFuture;
 use crate::link::BusLink;
 use crate::shell::{Door, answered};
 
-/// Why the person could not be asked.
+/// Why the shell could not be asked (the chooser, a permission question, a colour pick, a door).
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum ChooserError {
+pub enum ShellError {
     /// The shell is not on the bus, so there is nobody to ask. Sharing is refused.
     #[error("no picker is available")]
     Unavailable,
@@ -34,7 +34,7 @@ pub enum ChooserError {
     Call(String),
 }
 
-impl ChooserError {
+impl ShellError {
     /// Whether the person was never really asked: no shell to ask, not the shell, or the shell
     /// replaced mid-question. Each of these is a no, never a yes.
     pub fn is_refusal(&self) -> bool {
@@ -51,7 +51,7 @@ pub trait Chooser: Send + Sync + std::fmt::Debug {
     fn pick<'a>(
         &'a self,
         request: &'a ChoiceRequest,
-    ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>>;
+    ) -> BoxFuture<'a, Result<Option<Choice>, ShellError>>;
 }
 
 /// The shell's side of the handshake, as the client sees it.
@@ -120,7 +120,7 @@ impl Chooser for ShellChooser {
     fn pick<'a>(
         &'a self,
         request: &'a ChoiceRequest,
-    ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>> {
+    ) -> BoxFuture<'a, Result<Option<Choice>, ShellError>> {
         Box::pin(async move {
             let Door { shell, mut watch } = Door::open(&self.link).await?;
             let cursor_modes = request.cursor_modes.iter().map(|m| m.to_wire()).collect();
@@ -147,8 +147,8 @@ fn multiple_to_wire(multiple: Multiple) -> u32 {
     }
 }
 
-pub(crate) fn call_failed(error: zbus::Error) -> ChooserError {
-    ChooserError::Call(error.to_string())
+pub(crate) fn call_failed(error: zbus::Error) -> ShellError {
+    ShellError::Call(error.to_string())
 }
 
 /// Whether the bus said nobody can answer: the shell is not on the bus (no owner, nothing to
@@ -177,11 +177,11 @@ pub fn nobody_answers(error: &zbus::Error) -> bool {
 }
 
 /// What a missing picker means for sharing: nobody was asked, so nobody said yes. An answer that
-/// could not be had because there is nobody to ask (see [`ChooserError::is_refusal`]) becomes a cancel, which shares nothing and
+/// could not be had because there is nobody to ask (see [`ShellError::is_refusal`]) becomes a cancel, which shares nothing and
 /// is the portal's plain "the person said no". Any other failure is still a failure.
 pub fn unavailable_is_cancel(
-    answer: Result<Option<Choice>, ChooserError>,
-) -> Result<Option<Choice>, ChooserError> {
+    answer: Result<Option<Choice>, ShellError>,
+) -> Result<Option<Choice>, ShellError> {
     match answer {
         Err(error) if error.is_refusal() => {
             tracing::warn!(%error, "no picker could be asked, so nothing is shared");
@@ -196,7 +196,7 @@ pub fn unavailable_is_cancel(
 pub fn answer_from_wire(
     sources: &[(String, String)],
     cursor: u32,
-) -> Result<Option<Choice>, ChooserError> {
+) -> Result<Option<Choice>, ShellError> {
     if sources.is_empty() {
         return Ok(None);
     }
@@ -204,8 +204,8 @@ pub fn answer_from_wire(
         .iter()
         .map(|(kind, name)| source_from_wire(kind, name))
         .collect::<Option<Vec<_>>>()
-        .ok_or(ChooserError::BadAnswer)?;
-    let cursor = CursorMode::from_wire(cursor).ok_or(ChooserError::BadAnswer)?;
+        .ok_or(ShellError::BadAnswer)?;
+    let cursor = CursorMode::from_wire(cursor).ok_or(ShellError::BadAnswer)?;
     Ok(Some(Choice { sources, cursor }))
 }
 
@@ -243,7 +243,7 @@ impl Chooser for FakeChooser {
     fn pick<'a>(
         &'a self,
         request: &'a ChoiceRequest,
-    ) -> BoxFuture<'a, Result<Option<Choice>, ChooserError>> {
+    ) -> BoxFuture<'a, Result<Option<Choice>, ShellError>> {
         let next = self.answers.lock().ok().and_then(|mut a| a.pop()).flatten();
         Box::pin(async move {
             Ok(next.and_then(|(sources, cursor)| request.accept(sources, cursor).ok()))

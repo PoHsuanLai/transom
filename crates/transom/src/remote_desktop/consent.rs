@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::devices::DeviceKinds;
 use crate::BoxFuture;
 use crate::access::{Answer, Asker, Question};
-use crate::chooser::ChooserError;
+use crate::chooser::ShellError;
 
 /// What the person said to "let this app control the computer".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub enum ConsentAnswer {
 pub enum ConsentError {
     /// Nobody can be asked, so nothing is granted.
     #[error("the person could not be asked: {0}")]
-    Unavailable(#[from] ChooserError),
+    Unavailable(#[from] ShellError),
 }
 
 /// The seam: ask the person whether `app_label` may control the computer with `kinds`.

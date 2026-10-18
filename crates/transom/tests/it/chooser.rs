@@ -1,6 +1,6 @@
 use transom::access::{AccessService, Answer, FakeAsker, Question, response_of};
 use transom::chooser::{
-    Chooser, ChooserError, FakeChooser, answer_from_wire, nobody_answers, source_from_wire,
+    Chooser, FakeChooser, ShellError, answer_from_wire, nobody_answers, source_from_wire,
     unavailable_is_cancel,
 };
 use transom::names::AppNames;
@@ -72,7 +72,7 @@ fn the_shells_answer_becomes_a_choice_a_cancel_or_a_bad_answer() {
     ] {
         assert!(matches!(
             answer_from_wire(&sources, cursor),
-            Err(ChooserError::BadAnswer)
+            Err(ShellError::BadAnswer)
         ));
     }
 }
@@ -94,13 +94,13 @@ fn a_shell_that_cannot_answer_is_a_cancel_and_other_failures_stay_failures() {
         assert_eq!(nobody_answers(&error), nobody, "{error}");
     }
     for refusal in [
-        ChooserError::Unavailable,
-        ChooserError::NotTheShell,
-        ChooserError::ShellChanged,
+        ShellError::Unavailable,
+        ShellError::NotTheShell,
+        ShellError::ShellChanged,
     ] {
         assert!(matches!(unavailable_is_cancel(Err(refusal)), Ok(None)));
     }
-    for failure in [ChooserError::BadAnswer, ChooserError::Call("x".into())] {
+    for failure in [ShellError::BadAnswer, ShellError::Call("x".into())] {
         assert!(unavailable_is_cancel(Err(failure)).is_err());
     }
     assert!(matches!(unavailable_is_cancel(Ok(None)), Ok(None)));
@@ -108,21 +108,17 @@ fn a_shell_that_cannot_answer_is_a_cancel_and_other_failures_stay_failures() {
 
 #[test]
 fn what_asking_came_to_is_the_portals_response_code() {
-    let cases: [(&str, Result<Answer, ChooserError>, u32); 8] = [
+    let cases: [(&str, Result<Answer, ShellError>, u32); 8] = [
         ("granted", Ok(Answer::Granted), 0),
         ("denied", Ok(Answer::Denied), 1),
         ("dismissed is cancelled", Ok(Answer::Dismissed), 1),
-        ("no shell is a no", Err(ChooserError::Unavailable), 1),
-        ("not the shell is a no", Err(ChooserError::NotTheShell), 1),
-        (
-            "a replaced shell is a no",
-            Err(ChooserError::ShellChanged),
-            1,
-        ),
-        ("a bad answer ends it", Err(ChooserError::BadAnswer), 2),
+        ("no shell is a no", Err(ShellError::Unavailable), 1),
+        ("not the shell is a no", Err(ShellError::NotTheShell), 1),
+        ("a replaced shell is a no", Err(ShellError::ShellChanged), 1),
+        ("a bad answer ends it", Err(ShellError::BadAnswer), 2),
         (
             "a failed call ends it",
-            Err(ChooserError::Call("x".into())),
+            Err(ShellError::Call("x".into())),
             2,
         ),
     ];

@@ -11,7 +11,7 @@ use transom::screenshot::{
     Placed, ScreenGrab, ScreenshotService, ScreenshotSetup, ShotError, color_from_wire, compose,
     file_uri, take,
 };
-use transom::{BoxFuture, chooser::ChooserError};
+use transom::{BoxFuture, chooser::ShellError};
 use transom_core::{Extent, OutputFacts, Point, Rgb, Turn, arrange};
 
 fn size(width: u32, height: u32) -> Extent {
@@ -232,7 +232,7 @@ fn a_mixed_sharpness_pair_of_screens_becomes_one_picture() {
 fn ask<'a>(
     picker: &'a FakeColorPicker,
     label: &'a str,
-) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
+) -> BoxFuture<'a, Result<Option<Rgb>, ShellError>> {
     use transom::screenshot::ColorPicker;
     picker.pick(label)
 }
@@ -269,7 +269,7 @@ fn the_shells_colour_is_one_tuple_in_range_or_a_cancel() {
         vec![(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)],
     ] {
         assert!(
-            matches!(color_from_wire(&bad), Err(ChooserError::BadAnswer)),
+            matches!(color_from_wire(&bad), Err(ShellError::BadAnswer)),
             "{bad:?}"
         );
     }

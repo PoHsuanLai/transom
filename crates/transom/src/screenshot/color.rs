@@ -5,14 +5,14 @@ use std::sync::Mutex;
 use transom_core::Rgb;
 
 use crate::BoxFuture;
-use crate::chooser::ChooserError;
+use crate::chooser::ShellError;
 use crate::link::BusLink;
 use crate::shell::{Door, answered};
 
 /// The seam: show the colour picker and return the colour, or `None` if the person cancelled.
 pub trait ColorPicker: Send + Sync + std::fmt::Debug {
     /// Ask. `app_label` is the app's name as the person knows it.
-    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>>;
+    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ShellError>>;
 }
 
 /// The real picker: `org.quire.Shell1.PickColor(app_label: s) -> (color: a(ddd))`. The shell
@@ -31,7 +31,7 @@ impl ShellColorPicker {
 }
 
 impl ColorPicker for ShellColorPicker {
-    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
+    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ShellError>> {
         Box::pin(async move {
             let Door { shell, mut watch } = Door::open(&self.link).await?;
             let picked = answered(&mut watch, shell.pick_color(app_label)).await?;
@@ -42,7 +42,7 @@ impl ColorPicker for ShellColorPicker {
 
 /// Turn the shell's answer into a colour. No tuple is a cancel; one tuple whose channels are
 /// each in 0 to 1 is the colour; anything else is a bad answer.
-pub fn color_from_wire(picked: &[(f64, f64, f64)]) -> Result<Option<Rgb>, ChooserError> {
+pub fn color_from_wire(picked: &[(f64, f64, f64)]) -> Result<Option<Rgb>, ShellError> {
     match picked {
         [] => Ok(None),
         [(r, g, b)] if [r, g, b].iter().all(|c| (0.0..=1.0).contains(*c)) => Ok(Some(Rgb {
@@ -50,7 +50,7 @@ pub fn color_from_wire(picked: &[(f64, f64, f64)]) -> Result<Option<Rgb>, Choose
             g: *g,
             b: *b,
         })),
-        _ => Err(ChooserError::BadAnswer),
+        _ => Err(ShellError::BadAnswer),
     }
 }
 
@@ -59,7 +59,7 @@ pub fn color_from_wire(picked: &[(f64, f64, f64)]) -> Result<Option<Rgb>, Choose
 pub struct NoColorPicker;
 
 impl ColorPicker for NoColorPicker {
-    fn pick<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
+    fn pick<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ShellError>> {
         Box::pin(async { Ok(None) })
     }
 }
@@ -90,7 +90,7 @@ impl FakeColorPicker {
 }
 
 impl ColorPicker for FakeColorPicker {
-    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ChooserError>> {
+    fn pick<'a>(&'a self, app_label: &'a str) -> BoxFuture<'a, Result<Option<Rgb>, ShellError>> {
         if let Ok(mut asked) = self.asked.lock() {
             asked.push(app_label.to_owned());
         }

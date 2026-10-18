@@ -9,14 +9,14 @@
 //! 3. Ask that owner by its unique name, so the question cannot reach whoever takes the name next.
 //! 4. If the name changes hands while the person is deciding, drop the question: it is a no.
 //!
-//! Any step that fails is a refusal ([`ChooserError::is_refusal`]), never a yes.
+//! Any step that fails is a refusal ([`ShellError::is_refusal`]), never a yes.
 
 use std::future::Future;
 
 use peephole_bus::OwnerWatch;
 use peephole_bus::peephole_core::roles;
 
-use crate::chooser::{ChooserError, Shell1Proxy, call_failed, nobody_answers};
+use crate::chooser::{Shell1Proxy, ShellError, call_failed, nobody_answers};
 use crate::link::BusLink;
 use crate::peers::need;
 
@@ -35,23 +35,23 @@ pub(crate) struct Door {
 
 impl Door {
     /// Confirm who owns [`SHELL_NAME`] now. A name nobody owns, an owner that is not the shell and
-    /// a bus that does not answer are all [`ChooserError::NotTheShell`].
-    pub async fn open(link: &BusLink) -> Result<Self, ChooserError> {
+    /// a bus that does not answer are all [`ShellError::NotTheShell`].
+    pub async fn open(link: &BusLink) -> Result<Self, ShellError> {
         let connection = link.connection()?;
         let Some(peers) = link.peers() else {
             tracing::warn!("the shell cannot be confirmed before callers can be told apart");
-            return Err(ChooserError::NotTheShell);
+            return Err(ShellError::NotTheShell);
         };
         let watch = peers.watch_owner(SHELL_NAME).await.map_err(|error| {
             tracing::warn!(%error, "the shell's name could not be watched, so it is not asked");
-            ChooserError::NotTheShell
+            ShellError::NotTheShell
         })?;
         let owner = peers
             .owner_of(SHELL_NAME, &need(roles::SHELL))
             .await
             .map_err(|refused| {
                 tracing::warn!(%refused, "the shell could not be confirmed, so it is not asked");
-                ChooserError::NotTheShell
+                ShellError::NotTheShell
             })?;
         let shell = Shell1Proxy::builder(&connection)
             .destination(owner)
@@ -64,21 +64,21 @@ impl Door {
 }
 
 /// Wait for `call` to the confirmed shell, unless the name changes hands first
-/// ([`ChooserError::ShellChanged`]). A shell that does not serve the question at all is
-/// [`ChooserError::Unavailable`].
+/// ([`ShellError::ShellChanged`]). A shell that does not serve the question at all is
+/// [`ShellError::Unavailable`].
 pub(crate) async fn answered<T>(
     watch: &mut OwnerWatch,
     call: impl Future<Output = zbus::Result<T>>,
-) -> Result<T, ChooserError> {
+) -> Result<T, ShellError> {
     tokio::select! {
         biased;
         _ = watch.changed() => {
             tracing::warn!("the shell changed while it was being asked, so the question ends");
-            Err(ChooserError::ShellChanged)
+            Err(ShellError::ShellChanged)
         }
         asked = call => match asked {
             Ok(answer) => Ok(answer),
-            Err(error) if nobody_answers(&error) => Err(ChooserError::Unavailable),
+            Err(error) if nobody_answers(&error) => Err(ShellError::Unavailable),
             Err(error) => Err(call_failed(error)),
         },
     }
