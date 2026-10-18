@@ -39,7 +39,7 @@ scripts/check-boundary.sh
 
 | Trait | Real | Fake | Fill lane |
 | --- | --- | --- | --- |
-| `capture::CaptureSource` | `ExtCapture` (`OutputCapture`, `ToplevelCapture`) | `FakeCapture` | P2-T2 |
+| `capture::CaptureSource` | `ExtCapture` | `FakeCapture` | P2-T2 |
 | `screencast::stream::FrameSink` | `PipewireSink` | `FakeSink` | P2-T2 |
 | `screencast::restore::RestoreStore` | `FileStore` | `MemoryStore` | P2-T2 |
 | `screenshot::OutputLayout` | `LiveLayout` (asks the compositor at each screenshot) | `FixedLayout` | transom-shot |

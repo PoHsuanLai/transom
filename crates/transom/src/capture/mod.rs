@@ -2,16 +2,14 @@
 //!
 //! [`CaptureSource`] is the seam. [`ExtCapture`] is the real implementation, a client of the
 //! Wayland image-capture protocols (`ext-image-capture-source` with `ext-image-copy-capture`),
-//! so it works against any compositor that serves them; it picks the output or toplevel flavour.
+//! so it works against any compositor that serves them, for a display or for a window.
 //! [`FakeCapture`] serves recorded frames to tests.
 
 mod display;
 mod fake;
 mod job;
 mod line;
-pub mod output;
 mod pool;
-pub mod toplevel;
 mod wl;
 
 use std::net::Shutdown;
@@ -26,6 +24,8 @@ pub use fake::FakeCapture;
 pub use job::Job;
 pub use line::{CasementLine, FakeLine, LINE_DEADLINE, LineError, PortalLine};
 pub use pool::{FramePool, POOL_KEEP, PixelBuffer};
+
+use wl::Copier;
 
 /// A size in physical pixels, as the capture produces it: for a window, logical size times
 /// scale, rounded.
@@ -175,15 +175,14 @@ impl Canceller {
 }
 
 /// The real capture source: a client of the compositor's image-capture protocols.
+///
+/// A display is captured through `ext_output_image_capture_source_manager_v1`; a window through
+/// `ext_foreign_toplevel_image_capture_source_manager_v1`, using the identifier
+/// `ext_foreign_toplevel_list_v1` publishes (frames are sized at logical size times scale and sent
+/// only when the window changed). Both copy through `ext_image_copy_capture_manager_v1`.
 #[derive(Debug)]
 pub struct ExtCapture {
-    inner: ExtKind,
-}
-
-#[derive(Debug)]
-enum ExtKind {
-    Output(output::OutputCapture),
-    Toplevel(toplevel::ToplevelCapture),
+    copier: Copier,
 }
 
 impl ExtCapture {
@@ -193,52 +192,43 @@ impl ExtCapture {
     }
 
     /// As [`ExtCapture::open`], with the pointer drawn into the picture when `cursor` is
-    /// [`CursorMode::Embedded`]. The metadata mode captures without the pointer.
+    /// [`CursorMode::Embedded`]. The metadata mode captures without the pointer. A window that is
+    /// already gone is [`CaptureError::Ended`].
     pub fn open_with(
         job: &Job,
         source: &CastSource,
         cursor: CursorMode,
     ) -> Result<Self, CaptureError> {
-        let inner = match source {
-            CastSource::Output(name) => {
-                ExtKind::Output(output::OutputCapture::open_with(job, name, cursor)?)
-            }
-            CastSource::Window(id) => {
-                ExtKind::Toplevel(toplevel::ToplevelCapture::open_with(job, id, cursor)?)
-            }
+        let mut link = job.link()?;
+        let wl_source = match source {
+            CastSource::Output(name) => link.output_source(name)?,
+            CastSource::Window(id) => link.toplevel_source(id)?,
             // A kind of source a later transom-core adds and this capture does not know.
             _ => return Err(CaptureError::Unsupported),
         };
-        Ok(Self { inner })
+        Ok(Self {
+            copier: Copier::start(link, wl_source, cursor)?,
+        })
     }
 }
 
 impl CaptureSource for ExtCapture {
     fn frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        match &mut self.inner {
-            ExtKind::Output(c) => c.frame(),
-            ExtKind::Toplevel(c) => c.frame(),
-        }
+        self.copier.frame()
     }
 
     fn next_frame(&mut self, wait: Duration) -> Result<Arrival, CaptureError> {
-        match &mut self.inner {
-            ExtKind::Output(c) => c.next_frame(wait),
-            ExtKind::Toplevel(c) => c.next_frame(wait),
-        }
+        Ok(match self.copier.frame_within(wait)? {
+            Some(frame) => Arrival::Frame(frame),
+            None => Arrival::Quiet,
+        })
     }
 
     fn size(&self) -> PhysicalSizeWire {
-        match &self.inner {
-            ExtKind::Output(c) => c.size(),
-            ExtKind::Toplevel(c) => c.size(),
-        }
+        self.copier.size()
     }
 
     fn canceller(&self) -> Option<Canceller> {
-        match &self.inner {
-            ExtKind::Output(c) => c.canceller(),
-            ExtKind::Toplevel(c) => c.canceller(),
-        }
+        self.copier.canceller()
     }
 }
