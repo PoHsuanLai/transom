@@ -1,11 +1,10 @@
 //! The sessions of the remote-control portal, and what has happened in each.
 
-use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::devices::DeviceKinds;
-use crate::peers::{Admission, SESSION_LIMITS, Tether, UNSTARTED_TTL, admit};
-use crate::screencast::session::{Refusal, SessionKey};
+use crate::peers::Tether;
+use crate::table::{Refusal, SessionKey, Slot, Table};
 
 /// How far a session has come.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,11 +41,25 @@ pub(super) struct Entry {
     pub opened: Instant,
 }
 
+impl Slot for Entry {
+    fn tether(&self) -> &Tether {
+        &self.tether
+    }
+
+    fn opened(&self) -> Instant {
+        self.opened
+    }
+
+    fn unstarted(&self) -> bool {
+        self.stage == Stage::Created
+    }
+}
+
 /// Every open session.
 #[derive(Debug)]
 pub(super) struct Book {
     next: u64,
-    pub entries: BTreeMap<SessionKey, Entry>,
+    pub table: Table<Entry>,
 }
 
 impl Book {
@@ -57,12 +70,12 @@ impl Book {
     pub fn starting_after(after: u64) -> Self {
         Self {
             next: after,
-            entries: BTreeMap::new(),
+            table: Table::default(),
         }
     }
 
     /// A new entry for `app_id` hung on `tether` at time `now`; its number is never reused. A
-    /// full book drops the sessions that never began and are older than [`UNSTARTED_TTL`] to make
+    /// full book drops the sessions that never began and are older than [`crate::peers::UNSTARTED_TTL`] to make
     /// room; the result is the handles dropped.
     pub fn open(
         &mut self,
@@ -71,71 +84,26 @@ impl Book {
         tether: Tether,
         now: Instant,
     ) -> Result<Vec<SessionKey>, Refusal> {
-        if self.entries.contains_key(&key) {
-            return Err(Refusal::AlreadyOpen);
-        }
-        let mut dropped = Vec::new();
-        if self.admits(&tether) == Admission::Full {
-            dropped = self.expire(now);
-            if self.admits(&tether) == Admission::Full {
-                return Err(Refusal::Full);
-            }
-        }
-        self.next += 1;
-        self.entries.insert(
-            key,
+        let next = &mut self.next;
+        self.table.create(key, tether, now, |tether| {
+            *next += 1;
             Entry {
-                id: self.next,
+                id: *next,
                 app_id: app_id.to_owned(),
                 kinds: DeviceKinds::ALL,
                 stage: Stage::Created,
                 tether,
                 opened: now,
-            },
-        );
-        Ok(dropped)
-    }
-
-    fn admits(&self, tether: &Tether) -> Admission {
-        admit(
-            self.entries.values().map(|e| &e.tether),
-            tether,
-            SESSION_LIMITS,
-        )
-    }
-
-    /// Drop the sessions that never began and are older than [`UNSTARTED_TTL`] at `now`.
-    fn expire(&mut self, now: Instant) -> Vec<SessionKey> {
-        let stale: Vec<SessionKey> = self
-            .entries
-            .iter()
-            .filter(|(_, e)| {
-                e.stage == Stage::Created && now.saturating_duration_since(e.opened) > UNSTARTED_TTL
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in &stale {
-            self.entries.remove(key);
-        }
-        stale
-    }
-
-    /// Remove every session hung on `peer`; the handles and what was removed.
-    pub fn remove_held_by(&mut self, peer: &str) -> Vec<(SessionKey, Entry)> {
-        let keys: Vec<SessionKey> = self
-            .entries
-            .iter()
-            .filter(|(_, e)| e.tether.holds(peer))
-            .map(|(key, _)| key.clone())
-            .collect();
-        keys.into_iter()
-            .filter_map(|key| self.entries.remove(&key).map(|entry| (key, entry)))
-            .collect()
+            }
+        })
     }
 
     /// The entry under `key` if it is still entry number `id` (the handle may have been closed
     /// and opened again while something waited).
     pub fn entry_mut(&mut self, key: &SessionKey, id: u64) -> Option<&mut Entry> {
-        self.entries.get_mut(key).filter(|entry| entry.id == id)
+        self.table
+            .entries
+            .get_mut(key)
+            .filter(|entry| entry.id == id)
     }
 }

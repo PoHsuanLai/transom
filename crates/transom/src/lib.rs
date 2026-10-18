@@ -40,6 +40,7 @@ pub mod screencast;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;
+pub mod table;
 
 use std::future::Future;
 use std::pin::Pin;

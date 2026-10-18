@@ -23,7 +23,7 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 
 ```
 crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, pacing, settings_values}.rs
-crates/transom/src/{lib, main, error, link, peers, dev_rows (feature debug), shell, names, fsread, random, chooser, screenshot, settings, access}.rs
+crates/transom/src/{lib, main, error, link, peers, table, dev_rows (feature debug), shell, names, fsread, random, chooser, screenshot, settings, access}.rs
                    screenshot/{layout, color, service}.rs
                    remote_desktop/{mod, book, sessions, object, consent, eis, devices}.rs
                    inhibit/{mod, hub, effect}.rs

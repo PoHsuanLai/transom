@@ -40,7 +40,7 @@ use crate::names::AppNames;
 use crate::peers::{RoleGuard, Tether};
 use crate::response::Response;
 use crate::screencast::Dict;
-use crate::screencast::session::{Refusal, SessionKey};
+use crate::table::{Refusal, SessionKey};
 
 /// The answer to a call: the portal's response code and its results.
 pub type Reply = (u32, Dict);

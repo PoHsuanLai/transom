@@ -9,7 +9,7 @@ use super::book::{Book, Entry, Socket, Stage};
 use super::devices::DeviceKinds;
 use super::eis::{EisError, EisHandout};
 use crate::peers::{Creator, Tether};
-use crate::screencast::session::{Refusal, SessionKey};
+use crate::table::{Refusal, SessionKey};
 
 /// Why a `ConnectToEIS` was refused.
 #[derive(Debug, thiserror::Error)]
@@ -93,12 +93,16 @@ impl Core {
 
     /// The peer that opened the session `key`, if it is open.
     pub fn creator(&self, key: &SessionKey) -> Option<Creator> {
-        self.lock().entries.get(key).map(|e| e.tether.creator())
+        self.lock()
+            .table
+            .entries
+            .get(key)
+            .map(|e| e.tether.creator())
     }
 
     /// Ends every session hung on `peer`, taking back the sockets handed out; the handles ended.
     pub async fn peer_gone(&self, peer: &str) -> Vec<SessionKey> {
-        let gone = self.lock().remove_held_by(peer);
+        let gone = self.lock().table.remove_held_by(peer);
         let mut keys = Vec::with_capacity(gone.len());
         for (key, entry) in gone {
             self.revoke(Some(entry)).await;
@@ -109,7 +113,7 @@ impl Core {
 
     /// Records the kinds the app wants. Only before `Start`.
     pub fn select(&self, key: &SessionKey, kinds: DeviceKinds) -> Settled {
-        match self.lock().entries.get_mut(key) {
+        match self.lock().table.entries.get_mut(key) {
             Some(entry) if entry.stage == Stage::Created => {
                 entry.kinds = kinds;
                 Settled::Applied
@@ -122,7 +126,7 @@ impl Core {
     /// already asked about or allowed, or wants no device at all.
     pub fn start_asking(&self, key: &SessionKey) -> Option<Asking> {
         let mut book = self.lock();
-        let entry = book.entries.get_mut(key)?;
+        let entry = book.table.entries.get_mut(key)?;
         if entry.stage != Stage::Created || entry.kinds.is_empty() {
             return None;
         }
@@ -150,7 +154,7 @@ impl Core {
             }
             Verdict::Retract => entry.stage = Stage::Created,
             Verdict::Decline => {
-                book.entries.remove(key);
+                book.table.entries.remove(key);
             }
         }
         Settled::Applied
@@ -160,7 +164,11 @@ impl Core {
     pub async fn connect(&self, key: &SessionKey) -> Result<OwnedFd, ConnectError> {
         let (id, kinds) = {
             let mut book = self.lock();
-            let entry = book.entries.get_mut(key).ok_or(ConnectError::NoSession)?;
+            let entry = book
+                .table
+                .entries
+                .get_mut(key)
+                .ok_or(ConnectError::NoSession)?;
             let Stage::Started { socket } = &mut entry.stage else {
                 return Err(ConnectError::NotAllowed);
             };
@@ -194,7 +202,7 @@ impl Core {
 
     /// Ends the session `key` (an unknown one is ignored) and takes back its input socket.
     pub async fn close(&self, key: &SessionKey) {
-        let gone = self.lock().entries.remove(key);
+        let gone = self.lock().table.entries.remove(key);
         self.revoke(gone).await;
     }
 
@@ -213,7 +221,7 @@ impl Core {
     }
 
     pub fn len(&self) -> usize {
-        self.lock().entries.len()
+        self.lock().table.entries.len()
     }
 }
 
