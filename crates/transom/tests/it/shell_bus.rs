@@ -94,7 +94,7 @@ async fn shell_on(bus: &PrivateBus) -> Connection {
 
 fn request() -> ChoiceRequest {
     ChoiceRequest {
-        kinds: SourceKinds::OUTPUTS,
+        kinds: SourceKinds::Outputs,
         multiple: Multiple::One,
         cursor_modes: vec![CursorMode::Hidden],
         app_label: "Meet".to_owned(),

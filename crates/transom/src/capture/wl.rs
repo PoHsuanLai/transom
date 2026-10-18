@@ -100,6 +100,16 @@ struct FrameState {
     outcome: Option<Outcome>,
 }
 
+/// Whether the compositor still holds the capture session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Session {
+    /// The session is running.
+    #[default]
+    Live,
+    /// The compositor stopped it.
+    Stopped,
+}
+
 /// Everything the event handlers write to.
 #[derive(Debug, Default)]
 pub(super) struct Wl {
@@ -109,7 +119,7 @@ pub(super) struct Wl {
     current: Option<Constraints>,
     /// Bumped each time the session finishes sending constraints.
     generation: u32,
-    stopped: bool,
+    session: Session,
     frame: FrameState,
 }
 
@@ -358,9 +368,10 @@ impl Copier {
             retries: 0,
             pool: FramePool::new(),
         };
-        let described = copier
-            .link
-            .wait_within(|wl| wl.generation > 0 || wl.stopped, CONSTRAINTS_DEADLINE)?;
+        let described = copier.link.wait_within(
+            |wl| wl.generation > 0 || wl.session == Session::Stopped,
+            CONSTRAINTS_DEADLINE,
+        )?;
         if described == Waited::TimedOut {
             return Err(CaptureError::TimedOut);
         }
@@ -382,7 +393,7 @@ impl Copier {
 
     /// Take up the constraints the session last finished sending, if they are new.
     fn adopt_constraints(&mut self) -> Result<(), CaptureError> {
-        if self.link.wl.stopped {
+        if self.link.wl.session == Session::Stopped {
             return Err(CaptureError::Ended);
         }
         if self.generation == self.link.wl.generation {
@@ -462,9 +473,10 @@ impl Copier {
                 None => self.request()?,
             };
             let left = deadline.saturating_duration_since(Instant::now());
-            let answered = self
-                .link
-                .wait_within(|wl| wl.frame.outcome.is_some() || wl.stopped, left)?;
+            let answered = self.link.wait_within(
+                |wl| wl.frame.outcome.is_some() || wl.session == Session::Stopped,
+                left,
+            )?;
             if answered == Waited::TimedOut {
                 self.inflight = Some(frame);
                 return Ok(None);
@@ -693,7 +705,7 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for Wl {
                 state.current = Some(std::mem::take(&mut state.pending));
                 state.generation += 1;
             }
-            Event::Stopped => state.stopped = true,
+            Event::Stopped => state.session = Session::Stopped,
             _ => {}
         }
     }

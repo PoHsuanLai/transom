@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use transom_core::{
     CastSource, CursorMode, Extent, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
 };
-use zbus::zvariant::{Array, OwnedValue, Signature, Structure, StructureBuilder, Value};
+use zbus::zvariant::{
+    Array, Error as ValueError, OwnedValue, Signature, Structure, StructureBuilder, Value,
+};
 
 use super::Dict;
 use super::session::Selection;
@@ -75,16 +77,15 @@ pub fn restore_token(options: &Dict) -> Option<RestoreToken> {
 }
 
 /// The `restore_data` to hand back for a token: `("quire", 1, <token>)`.
-pub fn restore_data(token: &RestoreToken) -> Result<OwnedValue, String> {
+pub fn restore_data(token: &RestoreToken) -> Result<OwnedValue, ValueError> {
     let structure = StructureBuilder::new()
         .add_field(VENDOR)
         .add_field(DATA_VERSION)
         .append_field(Value::Value(Box::new(Value::new(
             token.expose().to_owned(),
         ))))
-        .build()
-        .map_err(|e| e.to_string())?;
-    OwnedValue::try_from(structure).map_err(|e| e.to_string())
+        .build()?;
+    OwnedValue::try_from(structure)
 }
 
 /// One stream of a granted share, as the reply describes it.
@@ -107,9 +108,8 @@ pub fn source_type(source: &CastSource) -> u32 {
 }
 
 /// The reply's `streams`: `a(ua{sv})`, the node and its properties.
-pub fn streams_value(streams: &[StreamInfo]) -> Result<OwnedValue, String> {
-    let wrong = |e: &dyn std::fmt::Display| e.to_string();
-    let signature = Signature::try_from("(ua{sv})").map_err(|e| wrong(&e))?;
+pub fn streams_value(streams: &[StreamInfo]) -> Result<OwnedValue, ValueError> {
+    let signature = Signature::try_from("(ua{sv})")?;
     let mut array = Array::new(&signature);
     for stream in streams {
         let size = Structure::from((
@@ -121,20 +121,14 @@ pub fn streams_value(streams: &[StreamInfo]) -> Result<OwnedValue, String> {
             "source_type".to_owned(),
             OwnedValue::from(source_type(&stream.source)),
         );
-        properties.insert(
-            "size".to_owned(),
-            OwnedValue::try_from(size).map_err(|e| wrong(&e))?,
-        );
+        properties.insert("size".to_owned(), OwnedValue::try_from(size)?);
         let element = StructureBuilder::new()
             .add_field(stream.node.0)
             .add_field(properties)
-            .build()
-            .map_err(|e| wrong(&e))?;
-        array
-            .append(Value::Structure(element))
-            .map_err(|e| wrong(&e))?;
+            .build()?;
+        array.append(Value::Structure(element))?;
     }
-    OwnedValue::try_from(array).map_err(|e| wrong(&e))
+    OwnedValue::try_from(array)
 }
 
 /// The results of a granted Start: `streams`, and when a token is kept, `persist_mode` and
@@ -142,7 +136,7 @@ pub fn streams_value(streams: &[StreamInfo]) -> Result<OwnedValue, String> {
 pub fn granted_results(
     streams: &[StreamInfo],
     kept: Option<(PersistMode, &RestoreToken)>,
-) -> Result<Dict, String> {
+) -> Result<Dict, ValueError> {
     let mut results = Dict::new();
     results.insert("streams".to_owned(), streams_value(streams)?);
     if let Some((mode, token)) = kept {

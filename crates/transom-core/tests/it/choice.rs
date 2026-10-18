@@ -20,16 +20,16 @@ fn request(kinds: SourceKinds, multiple: Multiple) -> ChoiceRequest {
 
 #[test]
 fn kinds_from_the_wire() {
-    assert_eq!(SourceKinds::from_wire(1), SourceKinds::OUTPUTS);
-    assert_eq!(SourceKinds::from_wire(2), SourceKinds::WINDOWS);
-    assert_eq!(SourceKinds::from_wire(3), SourceKinds::BOTH);
-    assert_eq!(SourceKinds::from_wire(0), SourceKinds::OUTPUTS);
+    assert_eq!(SourceKinds::from_wire(1), SourceKinds::Outputs);
+    assert_eq!(SourceKinds::from_wire(2), SourceKinds::Windows);
+    assert_eq!(SourceKinds::from_wire(3), SourceKinds::Both);
+    assert_eq!(SourceKinds::from_wire(0), SourceKinds::Outputs);
     assert_eq!(
         SourceKinds::from_wire(4),
-        SourceKinds::OUTPUTS,
+        SourceKinds::Outputs,
         "virtual only is not served: displays"
     );
-    assert_eq!(SourceKinds::from_wire(7), SourceKinds::BOTH);
+    assert_eq!(SourceKinds::from_wire(7), SourceKinds::Both);
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn the_acceptance_table() {
     let table = [
         (
             "one display",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::One,
             vec![out("A")],
             CursorMode::Embedded,
@@ -45,7 +45,7 @@ fn the_acceptance_table() {
         ),
         (
             "two when many",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::Many,
             vec![out("A"), win("w")],
             CursorMode::Hidden,
@@ -53,7 +53,7 @@ fn the_acceptance_table() {
         ),
         (
             "two when one",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::One,
             vec![out("A"), out("B")],
             CursorMode::Hidden,
@@ -61,7 +61,7 @@ fn the_acceptance_table() {
         ),
         (
             "nothing",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::One,
             vec![],
             CursorMode::Hidden,
@@ -69,7 +69,7 @@ fn the_acceptance_table() {
         ),
         (
             "a window when only displays",
-            SourceKinds::OUTPUTS,
+            SourceKinds::Outputs,
             Multiple::One,
             vec![win("w")],
             CursorMode::Hidden,
@@ -77,7 +77,7 @@ fn the_acceptance_table() {
         ),
         (
             "a display when only windows",
-            SourceKinds::WINDOWS,
+            SourceKinds::Windows,
             Multiple::One,
             vec![out("A")],
             CursorMode::Hidden,
@@ -85,7 +85,7 @@ fn the_acceptance_table() {
         ),
         (
             "the same twice",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::Many,
             vec![out("A"), out("A")],
             CursorMode::Hidden,
@@ -93,7 +93,7 @@ fn the_acceptance_table() {
         ),
         (
             "a cursor the app did not allow",
-            SourceKinds::BOTH,
+            SourceKinds::Both,
             Multiple::One,
             vec![out("A")],
             CursorMode::Metadata,

@@ -10,7 +10,7 @@ use zbus::zvariant::{OwnedValue, Value};
 
 fn request() -> ChoiceRequest {
     ChoiceRequest {
-        kinds: SourceKinds::BOTH,
+        kinds: SourceKinds::Both,
         multiple: Multiple::One,
         cursor_modes: vec![CursorMode::Embedded],
         app_label: "Meet".to_owned(),

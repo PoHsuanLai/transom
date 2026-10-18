@@ -2,7 +2,7 @@
 //! moves frames from one to the other.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use transom_core::{CastSource, CursorMode, PwNode};
@@ -30,15 +30,29 @@ pub enum OpenError {
     NoSources,
 }
 
-/// How a stream's thread ended.
-const RUNNING: u8 = 0;
-const STOPPED_BY_US: u8 = 1;
+/// Whether a stream's thread should go on; the share clears it when it is dropped.
+#[derive(Debug)]
+struct RunFlag(AtomicBool);
+
+impl RunFlag {
+    fn running() -> Self {
+        Self(AtomicBool::new(true))
+    }
+
+    fn is_running(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn stop(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// One source being shared.
 #[derive(Debug)]
 struct Running {
     info: StreamInfo,
-    state: Arc<AtomicU8>,
+    state: Arc<RunFlag>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -90,7 +104,7 @@ impl Share {
 impl Drop for Share {
     fn drop(&mut self) {
         for stream in &self.streams {
-            stream.state.store(STOPPED_BY_US, Ordering::SeqCst);
+            stream.state.stop();
         }
         // Each thread looks at its flag after every quiet turn (a quarter of a second at most)
         // and ends by itself, closing its own connection; they are not waited for here.
@@ -114,20 +128,20 @@ fn open_one(
         source: source.clone(),
         size,
     };
-    let state = Arc::new(AtomicU8::new(RUNNING));
+    let state = Arc::new(RunFlag::running());
     let mut pump = Pump::new(capture, sink, cursor);
     let thread = std::thread::Builder::new()
         .name("transom-share".to_owned())
         .spawn({
             let state = Arc::clone(&state);
             move || {
-                while state.load(Ordering::SeqCst) == RUNNING
+                while state.is_running()
                     && let Ok(
                         PumpOutcome::Pushed | PumpOutcome::ResizedAndPushed | PumpOutcome::Quiet,
                     ) = pump.turn()
                 {}
                 drop(pump);
-                if state.load(Ordering::SeqCst) == RUNNING {
+                if state.is_running() {
                     ended();
                 }
             }

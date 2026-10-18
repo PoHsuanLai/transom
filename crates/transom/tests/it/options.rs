@@ -19,7 +19,7 @@ fn dict(entries: Vec<(&str, OwnedValue)>) -> Dict {
 #[test]
 fn an_empty_options_dictionary_takes_the_portals_defaults() {
     let chosen = selection(&Dict::new());
-    assert_eq!(chosen.kinds, SourceKinds::OUTPUTS);
+    assert_eq!(chosen.kinds, SourceKinds::Outputs);
     assert_eq!(chosen.multiple, Multiple::One);
     assert_eq!(chosen.cursor_modes, vec![CursorMode::Hidden]);
     assert_eq!(chosen.persist, PersistMode::DoNot);
@@ -34,7 +34,7 @@ fn the_selection_reads_each_option() {
         ("cursor_mode", OwnedValue::from(6_u32)),
         ("persist_mode", OwnedValue::from(2_u32)),
     ]));
-    assert_eq!(chosen.kinds, SourceKinds::BOTH);
+    assert_eq!(chosen.kinds, SourceKinds::Both);
     assert_eq!(chosen.multiple, Multiple::Many);
     assert_eq!(
         chosen.cursor_modes,
@@ -50,7 +50,7 @@ fn options_of_the_wrong_type_or_value_fall_back() {
         ("persist_mode", OwnedValue::from(9_u32)),
         ("cursor_mode", OwnedValue::from(8_u32)),
     ]));
-    assert_eq!(chosen.kinds, SourceKinds::OUTPUTS);
+    assert_eq!(chosen.kinds, SourceKinds::Outputs);
     assert_eq!(chosen.persist, PersistMode::DoNot);
     assert_eq!(chosen.cursor_modes, vec![CursorMode::Hidden]);
 }

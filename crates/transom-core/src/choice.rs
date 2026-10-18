@@ -8,37 +8,44 @@ use crate::screencast::{CastSource, CursorMode};
 /// Which kinds of source an app asked for. Built from the portal's `types` bit set (1 display,
 /// 2 window); other bits are dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SourceKinds(u32);
+#[non_exhaustive]
+pub enum SourceKinds {
+    /// Displays only.
+    Outputs,
+    /// Windows only.
+    Windows,
+    /// Both.
+    Both,
+}
 
 impl SourceKinds {
-    /// Displays only.
-    pub const OUTPUTS: Self = Self(1);
-    /// Windows only.
-    pub const WINDOWS: Self = Self(2);
-    /// Both.
-    pub const BOTH: Self = Self(3);
-
     /// The kinds for a portal value. An empty set (the app sent 0 or only unknown bits) means
     /// displays, the portal's own default.
     pub fn from_wire(value: u32) -> Self {
         match value & 3 {
-            0 => Self::OUTPUTS,
-            bits => Self(bits),
+            2 => Self::Windows,
+            3 => Self::Both,
+            _ => Self::Outputs,
         }
     }
 
     /// The portal's value.
     pub fn to_wire(self) -> u32 {
-        self.0
+        match self {
+            Self::Outputs => 1,
+            Self::Windows => 2,
+            Self::Both => 3,
+        }
     }
 
     /// Whether `source` is of an offered kind.
     pub fn offers(self, source: &CastSource) -> bool {
-        let bit = match source {
-            CastSource::Output(_) => 1,
-            CastSource::Window(_) => 2,
-        };
-        self.0 & bit != 0
+        matches!(
+            (self, source),
+            (Self::Both, _)
+                | (Self::Outputs, CastSource::Output(_))
+                | (Self::Windows, CastSource::Window(_))
+        )
     }
 }
 

@@ -49,6 +49,16 @@ fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// What the person said to "what do you want to share".
+enum Asked {
+    /// They chose these sources.
+    Picked(Choice),
+    /// They cancelled, or there was no one to ask.
+    Cancelled,
+    /// The question failed or the answer was not acceptable.
+    Failed,
+}
+
 impl Shared {
     pub fn new(chooser: Box<dyn Chooser>, restore: Box<dyn RestoreStore>) -> Self {
         Self {
@@ -174,12 +184,12 @@ impl Shared {
             for out in outs {
                 match out {
                     CastOut::AskChooser => match self.ask(selection, app_id).await {
-                        Ok(Some(choice)) => {
+                        Asked::Picked(choice) => {
                             cursor = choice.cursor;
                             inputs.push_back(CastIn::Picked(choice.sources));
                         }
-                        Ok(None) => inputs.push_back(CastIn::Picked(Vec::new())),
-                        Err(()) => {
+                        Asked::Cancelled => inputs.push_back(CastIn::Picked(Vec::new())),
+                        Asked::Failed => {
                             held(&self.sessions).apply(key, CastIn::Close);
                             return Response::Failed;
                         }
@@ -204,9 +214,9 @@ impl Shared {
         outcome
     }
 
-    /// Ask the person; `Err` when the question failed or the answer was not acceptable. With no
+    /// Ask the person; `Failed` when the question failed or the answer was not acceptable. With no
     /// shell to ask the answer is a cancel, never a share.
-    async fn ask(&self, selection: &Selection, app_id: &str) -> Result<Option<Choice>, ()> {
+    async fn ask(&self, selection: &Selection, app_id: &str) -> Asked {
         let request = ChoiceRequest {
             kinds: selection.kinds,
             multiple: selection.multiple,
@@ -214,14 +224,17 @@ impl Shared {
             app_label: self.names.label(app_id),
         };
         match unavailable_is_cancel(self.chooser.pick(&request).await) {
-            Ok(Some(choice)) => request
-                .accept(choice.sources, choice.cursor)
-                .map(Some)
-                .map_err(|refusal| tracing::warn!(%refusal, "the chooser's answer was refused")),
-            Ok(None) => Ok(None),
+            Ok(Some(choice)) => match request.accept(choice.sources, choice.cursor) {
+                Ok(accepted) => Asked::Picked(accepted),
+                Err(refusal) => {
+                    tracing::warn!(%refusal, "the chooser's answer was refused");
+                    Asked::Failed
+                }
+            },
+            Ok(None) => Asked::Cancelled,
             Err(error) => {
                 tracing::warn!(%error, "the person could not be asked what to share");
-                Err(())
+                Asked::Failed
             }
         }
     }
