@@ -296,6 +296,7 @@ impl Shared {
                         .keep(app_id, sources, keep, selection.restore.clone())
                         .await
                         .map(|token| (keep, token)),
+                    _ => None,
                 };
                 let kept = kept.as_ref().map(|(keep, token)| (*keep, token));
                 match options::granted_results(&streams, kept) {
