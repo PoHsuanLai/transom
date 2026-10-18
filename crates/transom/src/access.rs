@@ -14,7 +14,7 @@ use crate::BoxFuture;
 use crate::chooser::ShellError;
 use crate::link::BusLink;
 use crate::names::{AppNames, Layout, tidy_to};
-use crate::peers::FrontendOnly;
+use crate::peers::RoleGuard;
 use crate::response::Response;
 use crate::screencast::Dict;
 use crate::shell::{Door, answered};
@@ -250,7 +250,7 @@ impl Asker for FakeAsker {
 pub struct AccessService {
     asker: Box<dyn Asker>,
     names: AppNames,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl AccessService {
@@ -260,12 +260,12 @@ impl AccessService {
         Self {
             asker,
             names: AppNames::none(),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }

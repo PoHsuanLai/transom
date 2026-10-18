@@ -6,7 +6,7 @@ use zbus::fdo;
 use zbus::message::Header;
 
 use super::sessions::Core;
-use crate::peers::FrontendOnly;
+use crate::peers::RoleGuard;
 use crate::screencast::session::SessionKey;
 
 /// The backend's end of a session, at the session handle: the frontend calls `Close` on it.
@@ -14,12 +14,12 @@ use crate::screencast::session::SessionKey;
 pub(super) struct SessionObject {
     core: Arc<Core>,
     key: SessionKey,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl SessionObject {
     /// The object for the session `key`, whose callers `guard` admits.
-    pub(super) fn new(core: Arc<Core>, key: SessionKey, guard: FrontendOnly) -> Self {
+    pub(super) fn new(core: Arc<Core>, key: SessionKey, guard: RoleGuard) -> Self {
         Self { core, key, guard }
     }
 }

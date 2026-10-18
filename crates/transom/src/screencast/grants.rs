@@ -2,7 +2,7 @@
 //!
 //! A share that is remembered "until revoked" needs a way to be revoked (NEW-PI-7). Settings lists
 //! the apps that may share the screen without asking again and takes any of them back. Only the
-//! Settings app may call: it is proved `Full` like the portal frontend ([`SettingsOnly`]). Nothing
+//! Settings app may call: it is proved `Full` like the portal frontend ([`RoleGuard`]). Nothing
 //! secret leaves: the list names apps and dates, never tokens.
 
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use zbus::message::Header;
 
 use super::flow::Shared;
 use crate::names::AppNames;
-use crate::peers::SettingsOnly;
+use crate::peers::RoleGuard;
 
 /// The longest app id taken back (an id is a file name, so it cannot be longer).
 const MAX_ID_BYTES: usize = 255;
@@ -21,12 +21,12 @@ const MAX_ID_BYTES: usize = 255;
 #[derive(Debug)]
 pub struct GrantsService {
     shared: Arc<Shared>,
-    guard: SettingsOnly,
+    guard: RoleGuard,
     names: AppNames,
 }
 
 impl GrantsService {
-    pub(super) fn new(shared: Arc<Shared>, guard: SettingsOnly, names: AppNames) -> Self {
+    pub(super) fn new(shared: Arc<Shared>, guard: RoleGuard, names: AppNames) -> Self {
         Self {
             shared,
             guard,

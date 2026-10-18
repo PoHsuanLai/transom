@@ -38,7 +38,7 @@ use self::object::SessionObject;
 pub use self::sessions::ConnectError;
 use self::sessions::{Core, Settled, Verdict};
 use crate::names::AppNames;
-use crate::peers::{FrontendOnly, Tether};
+use crate::peers::{RoleGuard, Tether};
 use crate::response::Response;
 use crate::screencast::Dict;
 use crate::screencast::session::{Refusal, SessionKey};
@@ -52,7 +52,7 @@ pub struct RemoteDesktopService {
     core: Arc<Core>,
     consent: Box<dyn Consent>,
     names: AppNames,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl RemoteDesktopService {
@@ -63,12 +63,12 @@ impl RemoteDesktopService {
             core: Arc::new(Core::new(eis)),
             consent,
             names: AppNames::none(),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }

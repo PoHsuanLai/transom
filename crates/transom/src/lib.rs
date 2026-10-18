@@ -16,7 +16,7 @@
 //! on the connection that owns its name ([`link::BusLink`]), because the shell answers only that one.
 //!
 //! Who may call, and whom the portal asks, is decided by [`peers`] and [`shell`]: a call to any
-//! interface is refused unless it comes from the portal frontend ([`peers::FrontendOnly`]), and a
+//! interface is refused unless it comes from the portal frontend ([`peers::RoleGuard`]), and a
 //! question goes only to the program the caller table names as the shell, confirmed again for
 //! every question ([`shell`]). A build with the `debug` feature also takes the person's own rows
 //! (`dev_rows`); a release build has no such seam.
@@ -186,13 +186,13 @@ pub async fn serve_on(
     } = parts;
     let prover =
         prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
-    let guard = peers::FrontendOnly::new(link.clone());
+    let guard = peers::RoleGuard::frontend(link.clone());
     let cast = screencast::ScreenCastService::new(chooser, restore)
         .with_display(display)
         .with_names(names.clone())
         .with_prover(prover)
         .with_guard(guard.clone());
-    let grants = cast.grants(peers::SettingsOnly::new(link.clone()), names.clone());
+    let grants = cast.grants(peers::RoleGuard::settings(link.clone()), names.clone());
     let connection = builder
         .serve_at(
             PORTAL_PATH,

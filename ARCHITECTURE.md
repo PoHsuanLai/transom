@@ -87,14 +87,14 @@ recognised, every call is refused and the shell is never asked).
 
 - **Inbound.** Every method of every `org.freedesktop.impl.portal.*` interface (Screenshot, ScreenCast,
   RemoteDesktop with its `Notify*` and `ConnectToEIS`, Access, Inhibit, Settings, and the `Session` and `Request`
-  objects) starts with `peers::FrontendOnly::admit`: the sender must hold role `portal_frontend`, proved `Full`
+  objects) starts with `peers::RoleGuard::admit`: the sender must hold role `portal_frontend`, proved `Full`
   (image and unit as the unit manager states it). The refusal is `AccessDenied` (Settings: the portal's
   `NotAllowed`). Before `serve` has attached the means of telling callers apart, nobody passes. Properties
   (`version`, `AvailableSourceTypes`, ...) are answered by zbus without a guard; they carry no state.
 - **Creator.** A session or request remembers the sender that opened it (`peers::Creator`: the `Tether`'s caller for
   screen-cast and remote-control sessions, a field of the object for Inhibit requests and monitors). Every later
   call about it (`Select*`, `Start`, `ConnectToEIS`, `Notify*`, `QueryEndResponse`, `Close`) must come from that
-  same peer (`FrontendOnly::admit_creator`). A call about a session that is not open gets only the frontend check
+  same peer (`RoleGuard::admit_creator`). A call about a session that is not open gets only the frontend check
   and then the old answer (response 2), so a refusal says nothing about which handles exist.
 - **Outbound.** `shell::Door::open` runs once per question: subscribe to changes of the owner of `org.quire.Shell`,
   require that the owner holds role `shell`, proved `Full`, and address the question to that owner's unique name.
@@ -185,7 +185,7 @@ proved `Full`), `peers.who` says who is on it, and:
 (`screencast/grants.rs`). `ListGrants() -> a(ssut)` gives one entry per app that has a grant still in force: app id,
 the name to show, the persist mode (1 while it runs, 2 until taken back) and the date. `Revoke(app_id: s) -> u` forgets
 every grant of the app and says how many went. Neither names a token. Only the Settings app may call, proved `Full`
-like the frontend (`peers::SettingsOnly`); the Privacy page of Settings (detent) is the person's way in (see the ask in
+like the frontend (`peers::RoleGuard`); the Privacy page of Settings (detent) is the person's way in (see the ask in
 FINDINGS). A running share is not stopped by taking back its grant.
 
 ## 5. Window capture

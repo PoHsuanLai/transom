@@ -23,7 +23,7 @@ use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
 use crate::chooser::Chooser;
-use crate::peers::{FrontendOnly, Tether};
+use crate::peers::{RoleGuard, Tether};
 use crate::response::Response;
 use flow::Shared;
 use restore::RestoreStore;
@@ -36,7 +36,7 @@ pub type Dict = HashMap<String, OwnedValue>;
 #[derive(Debug)]
 pub struct ScreenCastService {
     shared: Arc<Shared>,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl ScreenCastService {
@@ -44,12 +44,12 @@ impl ScreenCastService {
     pub fn new(chooser: Box<dyn Chooser>, restore: Box<dyn RestoreStore>) -> Self {
         Self {
             shared: Arc::new(Shared::new(chooser, restore)),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }
@@ -75,7 +75,7 @@ impl ScreenCastService {
     /// same book as this one.
     pub fn grants(
         &self,
-        guard: crate::peers::SettingsOnly,
+        guard: crate::peers::RoleGuard,
         names: crate::names::AppNames,
     ) -> grants::GrantsService {
         grants::GrantsService::new(Arc::clone(&self.shared), guard, names)
@@ -114,7 +114,7 @@ impl ScreenCastService {
 pub struct SessionObject {
     key: SessionKey,
     shared: Arc<Shared>,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Session")]

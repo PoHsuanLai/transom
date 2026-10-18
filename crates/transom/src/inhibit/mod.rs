@@ -25,7 +25,7 @@ pub use self::effect::{
 pub use self::hub::{
     HoldError, InhibitHub, MAX_MONITORS, MonitorAdded, MonitorKnown, MonitorState, QueryEnd,
 };
-use crate::peers::{Creator, FrontendOnly, Tether};
+use crate::peers::{Creator, RoleGuard, Tether};
 use crate::screencast::Dict;
 
 type SharedHub = Arc<AsyncMutex<InhibitHub>>;
@@ -37,7 +37,7 @@ struct RequestObject {
     key: RequestHandle,
     path: OwnedObjectPath,
     creator: Creator,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Request")]
@@ -64,7 +64,7 @@ struct MonitorObject {
     hub: SharedHub,
     session: String,
     creator: Creator,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
@@ -109,7 +109,7 @@ fn initial_state() -> Dict {
 #[derive(Debug)]
 pub struct InhibitService {
     hub: SharedHub,
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl Default for InhibitService {
@@ -140,12 +140,12 @@ impl InhibitService {
     pub fn with_effect(effect: Box<dyn InhibitEffect>) -> Self {
         Self {
             hub: Arc::new(AsyncMutex::new(InhibitHub::new(effect))),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }

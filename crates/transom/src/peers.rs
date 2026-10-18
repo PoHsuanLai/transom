@@ -7,7 +7,7 @@
 //! one peer cannot fill the maps.
 //!
 //! Before any of that, every call to a portal interface must come from the portal frontend:
-//! [`FrontendOnly`] asks [`peephole_bus`] who the sender is and refuses anyone but the program the
+//! [`RoleGuard`] asks [`peephole_bus`] who the sender is and refuses anyone but the program the
 //! caller table names as the frontend (a build with the `debug` feature also takes the person's own
 //! rows, see `dev_rows`). A session or request also remembers the peer that made it
 //! ([`Creator`]) and only that peer may end or change it.
@@ -159,52 +159,54 @@ impl Creator {
     }
 }
 
-/// The guard every portal method starts with: the caller must be the portal frontend, proved
-/// at the strongest level (its image and its unit, as the unit manager states it). Before
+/// The guard of a method that only one program may call: the caller must hold `role`, proved at
+/// the strongest level (its image and its unit, as the unit manager states it). Before
 /// [`crate::serve`] has attached the means of telling callers apart, nobody passes.
-#[derive(Clone, Debug, Default)]
-pub struct FrontendOnly {
+///
+/// Every portal method starts with the [`RoleGuard::frontend`] guard; the few that list and take
+/// back what the portal remembers use [`RoleGuard::settings`] (only the Settings app).
+#[derive(Clone, Debug)]
+pub struct RoleGuard {
     link: BusLink,
+    role: RoleName,
 }
 
-impl FrontendOnly {
-    /// A guard that identifies callers through `link`.
-    pub fn new(link: BusLink) -> Self {
-        Self { link }
+impl Default for RoleGuard {
+    /// The frontend guard on a link nobody has attached yet, so every call is refused.
+    fn default() -> Self {
+        Self::frontend(BusLink::default())
+    }
+}
+
+impl RoleGuard {
+    /// A guard that lets the portal frontend through, identifying callers through `link`.
+    pub fn frontend(link: BusLink) -> Self {
+        Self {
+            link,
+            role: roles::PORTAL_FRONTEND,
+        }
     }
 
-    /// Let the call with `header` through if it comes from the portal frontend. The result is
+    /// A guard that lets the Settings app through, identifying callers through `link`.
+    pub fn settings(link: BusLink) -> Self {
+        Self {
+            link,
+            role: roles::SETTINGS,
+        }
+    }
+
+    /// Let the call with `header` through if it comes from the guarded program. The result is
     /// the creator to record on a session or request the call opens.
     pub async fn admit(&self, header: &Header<'_>) -> fdo::Result<Creator> {
-        admit_role(&self.link, header, roles::PORTAL_FRONTEND).await?;
+        admit_role(&self.link, header, self.role.clone()).await?;
         Ok(Creator::of(header))
     }
 
-    /// As [`FrontendOnly::admit`], and the call must also come from `creator`: the peer that
+    /// As [`RoleGuard::admit`], and the call must also come from `creator`: the peer that
     /// opened the session or request it is about.
     pub async fn admit_creator(&self, header: &Header<'_>, creator: &Creator) -> fdo::Result<()> {
         self.admit(header).await?;
         creator.require_caller(header)
-    }
-}
-
-/// The guard of the few methods only the Settings app may call (listing and taking back what the
-/// portal remembers): the caller must be Settings, proved `Full` like the frontend. Before
-/// [`crate::serve`] has attached the means of telling callers apart, nobody passes.
-#[derive(Clone, Debug, Default)]
-pub struct SettingsOnly {
-    link: BusLink,
-}
-
-impl SettingsOnly {
-    /// A guard that identifies callers through `link`.
-    pub fn new(link: BusLink) -> Self {
-        Self { link }
-    }
-
-    /// Let the call with `header` through if it comes from the Settings app.
-    pub async fn admit(&self, header: &Header<'_>) -> fdo::Result<()> {
-        admit_role(&self.link, header, roles::SETTINGS).await
     }
 }
 

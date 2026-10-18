@@ -14,7 +14,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedValue, StructureBuilder, Value};
 
 use crate::fsread::read_text;
-use crate::peers::FrontendOnly;
+use crate::peers::RoleGuard;
 use crate::{PORTAL_PATH, TransomError};
 
 /// The largest appearance document that is read. The real one is a few hundred bytes.
@@ -215,7 +215,7 @@ pub struct SettingsService {
     /// is not followed by another on a second thread.
     reading: Arc<tokio::sync::Mutex<()>>,
     /// Lets only the portal frontend call.
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl SettingsService {
@@ -225,12 +225,12 @@ impl SettingsService {
             source: Arc::from(appearance),
             last: Mutex::new(None),
             reading: Arc::default(),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }

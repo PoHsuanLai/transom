@@ -12,7 +12,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use super::{ScreenshotSetup, file_uri, take};
 use crate::access::{Question, response_of};
-use crate::peers::FrontendOnly;
+use crate::peers::RoleGuard;
 use crate::response::Response;
 use crate::screencast::Dict;
 use crate::settings::wire_value;
@@ -75,7 +75,7 @@ pub struct ScreenshotService {
     /// times over while it is made, and a caller must not be able to start many at once.
     one_at_a_time: Arc<Semaphore>,
     /// Lets only the portal frontend call.
-    guard: FrontendOnly,
+    guard: RoleGuard,
 }
 
 impl Default for ScreenshotService {
@@ -96,12 +96,12 @@ impl ScreenshotService {
             setup: Arc::new(setup),
             seq: AtomicU32::new(0),
             one_at_a_time: Arc::new(Semaphore::new(1)),
-            guard: FrontendOnly::default(),
+            guard: RoleGuard::default(),
         }
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
-    pub fn with_guard(mut self, guard: FrontendOnly) -> Self {
+    pub fn with_guard(mut self, guard: RoleGuard) -> Self {
         self.guard = guard;
         self
     }
