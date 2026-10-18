@@ -7,8 +7,8 @@
 //! - [`screencast::stream`]: where pixels go ([`screencast::stream::FrameSink`]).
 //! - [`screencast::restore`]: where restore tokens are kept ([`screencast::restore::RestoreStore`]).
 //! - [`chooser`]: how the person is asked what to share ([`chooser::Chooser`]).
-//! - [`remote_desktop`]: how the person is asked to allow remote control ([`remote_desktop::Consent`])
-//!   and where an input socket comes from ([`remote_desktop::EisHandout`]).
+//! - [`remote_desktop`]: how the person is asked to allow remote control
+//!   ([`remote_desktop::remote_control_question`]) and where an input socket comes from ([`remote_desktop::EisHandout`]).
 //! - [`access`]: how the person is asked a yes-or-no question about an app ([`access::Asker`]).
 //! - [`settings::AppearanceSource`]: where the appearance comes from.
 //!
@@ -65,11 +65,10 @@ pub struct Parts {
     pub restore: Box<dyn screencast::restore::RestoreStore>,
     /// Reads the appearance.
     pub appearance: Box<dyn settings::AppearanceSource>,
-    /// Asks the person whether an app may control the computer.
-    pub consent: Box<dyn remote_desktop::Consent>,
     /// Gets an input socket from the compositor for a remote-desktop session.
     pub eis: Box<dyn remote_desktop::EisHandout>,
-    /// Asks the person yes-or-no questions about an app.
+    /// Asks the person yes-or-no questions about an app, including whether it may control the
+    /// computer.
     pub access: Box<dyn access::Asker>,
     /// Takes screenshots; without a setup every screenshot is answered as failed.
     pub screenshots: screenshot::ScreenshotSetup,
@@ -103,9 +102,6 @@ impl Parts {
             chooser: Box::new(chooser::ShellChooser::new(link.clone())),
             restore: Box::new(restore),
             appearance: Box::new(appearance),
-            consent: Box::new(remote_desktop::ShellConsent::new(Box::new(
-                access::ShellAsker::new(link.clone()),
-            ))),
             eis: Box::new(remote_desktop::CasementEis::new(link.clone())),
             access: Box::new(access::ShellAsker::new(link.clone())),
             screenshots: screenshot::ScreenshotSetup::unconfigured(),
@@ -174,7 +170,6 @@ pub async fn serve_on(
         chooser,
         restore,
         appearance,
-        consent,
         eis,
         access,
         screenshots,
@@ -184,6 +179,7 @@ pub async fn serve_on(
         prover,
         callers,
     } = parts;
+    let asker: std::sync::Arc<dyn access::Asker> = access.into();
     let prover =
         prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
     let guard = peers::RoleGuard::frontend(link.clone());
@@ -203,7 +199,7 @@ pub async fn serve_on(
         .serve_at(PORTAL_PATH, grants)?
         .serve_at(
             PORTAL_PATH,
-            remote_desktop::RemoteDesktopService::new(consent, eis)
+            remote_desktop::RemoteDesktopService::new(Box::new(asker.clone()), eis)
                 .with_names(names.clone())
                 .with_guard(guard.clone()),
         )?
@@ -217,7 +213,7 @@ pub async fn serve_on(
         )?
         .serve_at(
             PORTAL_PATH,
-            access::AccessService::new(access)
+            access::AccessService::new(Box::new(asker))
                 .with_names(names)
                 .with_guard(guard),
         )?

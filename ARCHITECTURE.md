@@ -48,7 +48,7 @@ scripts/check-boundary.sh
 | `link::BusLink` | the connection that owns the portal's name and the `peers::Peers` that tell callers apart, both attached by `serve` | (none: tests use `serve_on` on a private bus and `Peers::introduce`) | PORTAL-01, 03, 10 |
 | `settings::AppearanceSource` | `DesktopAppearance` | (none: tests bring their own source) | P2-T1 |
 | `access::Asker` | `ShellAsker` (`org.quire.Shell1.AskPermission`) | `FakeAsker` | transom-access |
-| `remote_desktop::Consent` | `ShellConsent` (its own `AskPermission` question naming the input) | `FakeConsent` | P2-T3 |
+| `access::Asker` (remote control) | `ShellAsker` (its own `AskPermission` question naming the input, built by `remote_control_question`) | `FakeAsker` | P2-T3 |
 | `remote_desktop::EisHandout` | `CasementEis` (`org.quire.Compositor1.ConnectEis` and `EndEis`) | `FakeEis` | P2-T3 |
 | `capture::PortalLine` | `CasementLine` (`org.quire.Compositor1.Connect("portal")`: a Wayland connection of the portal's own, trusted for the screen and the windows; casement limits how often a caller may ask, so a capture job, `capture::Job`, asks once and runs every step on that connection) | `FakeLine` | NEW-FA-2 |
 
@@ -138,7 +138,7 @@ recognised, every call is refused and the shell is never asked).
 ## 4b. Flow of remote control
 
 `CreateSession` opens a session (and serves the session object at its handle); `SelectDevices`
-records `types`; `Start` asks the person through `Consent`, a question of its own that names the
+records `types`; `Start` asks the person through `Asker`, a question of its own that names the
 input the app would take over ("keyboard and pointer"), and answers with the devices granted; a
 screen-sharing pick is never a yes. The yes is bound to the session it was asked about. `ConnectToEIS`
 (only after a yes, once per session) asks the compositor for a socket with `EisHandout`, which tags

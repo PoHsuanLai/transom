@@ -12,7 +12,7 @@
 //!
 //! The calls are decided by [`RemoteDesktopService`]'s public methods (`create`, `select`,
 //! `begin`, `connect`, `close`), which the interface methods only wrap; tests drive them with
-//! [`FakeConsent`] and [`FakeEis`] and need no bus.
+//! a `FakeAsker` and [`FakeEis`] and need no bus.
 
 mod book;
 pub mod consent;
@@ -28,15 +28,14 @@ use zbus::fdo;
 use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
-pub use self::consent::{
-    Consent, ConsentAnswer, ConsentError, FakeConsent, ShellConsent, remote_control_question,
-};
+pub use self::consent::remote_control_question;
 use self::devices::DEVICE_TYPES;
 pub use self::devices::DeviceKinds;
 pub use self::eis::{CasementEis, EisError, EisHandout, FakeEis};
 use self::object::SessionObject;
 pub use self::sessions::ConnectError;
 use self::sessions::{Core, Settled, Verdict};
+use crate::access::{Answer, Asker};
 use crate::names::AppNames;
 use crate::peers::{RoleGuard, Tether};
 use crate::response::Response;
@@ -50,18 +49,19 @@ pub type Reply = (u32, Dict);
 #[derive(Debug)]
 pub struct RemoteDesktopService {
     core: Arc<Core>,
-    consent: Box<dyn Consent>,
+    asker: Box<dyn Asker>,
     names: AppNames,
     guard: RoleGuard,
 }
 
 impl RemoteDesktopService {
-    /// A service with no sessions, asking `consent` and getting sockets from `eis`. Apps are
-    /// shown by their ids until [`RemoteDesktopService::with_names`] says where their names are.
-    pub fn new(consent: Box<dyn Consent>, eis: Box<dyn EisHandout>) -> Self {
+    /// A service with no sessions, asking the person through `asker` and getting sockets from
+    /// `eis`. Apps are shown by their ids until [`RemoteDesktopService::with_names`] says where
+    /// their names are.
+    pub fn new(asker: Box<dyn Asker>, eis: Box<dyn EisHandout>) -> Self {
         Self {
             core: Arc::new(Core::new(eis)),
-            consent,
+            asker,
             names: AppNames::none(),
             guard: RoleGuard::default(),
         }
@@ -153,8 +153,9 @@ impl RemoteDesktopService {
         };
         let label = self.names.label(&asking.app_id);
         let settle = |verdict| self.core.settle(key, asking.id, verdict);
-        match self.consent.ask(&label, asking.kinds).await {
-            Ok(ConsentAnswer::Allowed) => match settle(Verdict::Allow) {
+        let question = remote_control_question(&label, asking.kinds);
+        match self.asker.ask(&question).await {
+            Ok(Answer::Granted) => match settle(Verdict::Allow) {
                 Settled::Applied => {
                     let mut results = Dict::new();
                     if let Some(devices) = owned(asking.kinds.to_wire()) {

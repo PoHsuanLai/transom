@@ -70,15 +70,15 @@ One ignored test: `fill::the_pipewire_sink_accepts_a_run_of_frames` needs a Pipe
 Not compiled; the orchestrator gates. `remote_desktop.rs` has no `todo!()`.
 
 - **Shape.** The interface methods wrap public methods of `RemoteDesktopService` (`create`, `select`, `begin`, `connect`,
-  `close`) so tests run without a bus. Seams: `Consent` (`ShellConsent`, `FakeConsent`) and `EisHandout` (`CasementEis`,
-  `FakeEis`); `Parts` gained `consent` and `eis` (built inside `Parts::real`, whose signature is unchanged).
+  `close`) so tests run without a bus. Seams: `Asker` (the one `Parts.access`; the question is `remote_control_question`) and `EisHandout` (`CasementEis`,
+  `FakeEis`); `Parts` gained `eis` (built inside `Parts::real`, whose signature is unchanged).
 - **EIS only.** `ConnectToEIS` asks `org.quire.Compositor1.ConnectEis(session: t, devices: u) -> h` (casement; only
   `transom.service` may call it). The `Notify*` methods are accepted and dropped (debug log): there is no second way in.
   Checked against the installed `org.freedesktop.impl.portal.RemoteDesktop.xml`: all signatures match the skeleton; `ConnectToEIS`
   now returns `fdo::Result<h>` so a refusal is an error and not a panic.
 - **Session object.** The frontend closes a session through `org.freedesktop.impl.portal.Session.Close` at the session handle; a
   small `SessionObject` is served there (another portal interface serving the same handle is tolerated). No `Closed` signal yet.
-- **Closed 2026-10-16 (PORTAL-04): consent is its own question.** `ShellConsent` now asks `AskPermission` (below) with
+- **Closed 2026-10-16 (PORTAL-04): consent is its own question.** remote control now asks `AskPermission` (below) with
   text naming the input kinds in plain words ("keyboard and pointer"); a screen-sharing pick is never a yes. The app is
   shown by its desktop entry's name (PORTAL-11). No `AskRemoteControl` method is needed on the shell's side.
 - **Open: combined sessions.** An app that shares a screen and controls it in one session expects `streams` in the `Start`
