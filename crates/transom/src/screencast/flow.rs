@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use transom_core::{
-    CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, Grant, PersistMode, PwNode,
-    Remembered, RestoreBook, RestoreToken,
+    CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, Grant, Keep, PersistMode,
+    PwNode, Remembered, RestoreBook, RestoreToken,
 };
 use zbus::Connection;
 
@@ -292,13 +292,13 @@ impl Shared {
                 };
                 let kept = match selection.persist {
                     PersistMode::DoNot => None,
-                    _ if !self.remembers(key, app_id).await => None,
-                    mode => {
-                        self.keep(app_id, sources, mode, selection.restore.clone())
-                            .await
-                    }
+                    PersistMode::Keep(_) if !self.remembers(key, app_id).await => None,
+                    PersistMode::Keep(keep) => self
+                        .keep(app_id, sources, keep, selection.restore.clone())
+                        .await
+                        .map(|token| (keep, token)),
                 };
-                let kept = kept.as_ref().map(|token| (selection.persist, token));
+                let kept = kept.as_ref().map(|(keep, token)| (*keep, token));
                 match options::granted_results(&streams, kept) {
                     Ok(results) => Response::Granted(results),
                     Err(error) => {
@@ -365,12 +365,12 @@ impl Shared {
         self: &Arc<Self>,
         app_id: &str,
         sources: Vec<CastSource>,
-        mode: PersistMode,
+        keep: Keep,
         replaces: Option<RestoreToken>,
     ) -> Option<RestoreToken> {
         let (this, app_id) = (Arc::clone(self), app_id.to_owned());
         tokio::task::spawn_blocking(move || {
-            this.keep_now(&app_id, sources, mode, replaces.as_ref())
+            this.keep_now(&app_id, sources, keep, replaces.as_ref())
         })
         .await
         .ok()
@@ -381,11 +381,11 @@ impl Shared {
         &self,
         app_id: &str,
         sources: Vec<CastSource>,
-        mode: PersistMode,
+        keep: Keep,
         replaces: Option<&RestoreToken>,
     ) -> Option<RestoreToken> {
         let now = unix_now();
-        let Some(grant) = Grant::issue(app_id, sources, mode, now) else {
+        let Some(grant) = Grant::issue(app_id, sources, keep, now) else {
             tracing::info!(
                 "this share is not remembered: the app has no identity to remember it by"
             );

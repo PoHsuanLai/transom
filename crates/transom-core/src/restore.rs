@@ -10,16 +10,43 @@ use std::fmt;
 
 use crate::screencast::CastSource;
 
-/// How long a grant is remembered. The wire values are the portal's: 0, 1, 2.
+/// How long a stored grant is remembered. The wire values are the portal's: 1 and 2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum Keep {
+    /// While the app that asked is running.
+    WhileRunning,
+    /// Until the person takes it back.
+    UntilRevoked,
+}
+
+impl Keep {
+    /// The keep for a portal value; `None` for anything but 1 or 2.
+    pub fn from_wire(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(Self::WhileRunning),
+            2 => Some(Self::UntilRevoked),
+            _ => None,
+        }
+    }
+
+    /// The portal's value for this keep.
+    pub fn to_wire(self) -> u32 {
+        match self {
+            Self::WhileRunning => 1,
+            Self::UntilRevoked => 2,
+        }
+    }
+}
+
+/// What an app asks to have remembered. The wire values are the portal's: 0, 1, 2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum PersistMode {
     /// Not at all.
     DoNot,
-    /// While the app that asked is running.
-    WhileRunning,
-    /// Until the person takes it back.
-    UntilRevoked,
+    /// Remember it, for this long.
+    Keep(Keep),
 }
 
 impl PersistMode {
@@ -27,9 +54,7 @@ impl PersistMode {
     pub fn from_wire(value: u32) -> Option<Self> {
         match value {
             0 => Some(Self::DoNot),
-            1 => Some(Self::WhileRunning),
-            2 => Some(Self::UntilRevoked),
-            _ => None,
+            other => Keep::from_wire(other).map(Self::Keep),
         }
     }
 
@@ -37,8 +62,7 @@ impl PersistMode {
     pub fn to_wire(self) -> u32 {
         match self {
             Self::DoNot => 0,
-            Self::WhileRunning => 1,
-            Self::UntilRevoked => 2,
+            Self::Keep(keep) => keep.to_wire(),
         }
     }
 }
@@ -84,11 +108,11 @@ impl fmt::Debug for RestoreToken {
     }
 }
 
-/// How long a grant for [`PersistMode::WhileRunning`] is remembered: a day. The portal cannot see
+/// How long a grant for [`Keep::WhileRunning`] is remembered: a day. The portal cannot see
 /// the app end, so "while it runs" is bounded by the longest a session of one app plausibly lasts.
 pub const WHILE_RUNNING_SECS: u64 = 24 * 60 * 60;
 
-/// How long a grant for [`PersistMode::UntilRevoked`] is remembered: thirty days, the interval at
+/// How long a grant for [`Keep::UntilRevoked`] is remembered: thirty days, the interval at
 /// which macOS asks again whether an app may keep recording the screen. After that the person is
 /// asked once more, and a new grant starts a new thirty days.
 pub const UNTIL_REVOKED_SECS: u64 = 30 * 24 * 60 * 60;
@@ -104,26 +128,19 @@ pub struct Grant {
     /// The sources it was given.
     pub sources: Vec<CastSource>,
     /// How long the app asked for it to be remembered.
-    pub mode: PersistMode,
+    pub keep: Keep,
     /// When it was given, in seconds since the Unix epoch.
     pub granted_at: u64,
 }
 
 impl Grant {
-    /// The grant to remember for `app_id`, or `None` when none may be kept: the app asked for no
-    /// persistence, has no identity (an empty app id is shared by every app that has none), or
+    /// The grant to remember for `app_id`, or `None` when none may be kept: the app has no identity (an empty app id is shared by every app that has none), or
     /// shared nothing.
-    pub fn issue(
-        app_id: &str,
-        sources: Vec<CastSource>,
-        mode: PersistMode,
-        now: u64,
-    ) -> Option<Self> {
-        let keeps = matches!(mode, PersistMode::WhileRunning | PersistMode::UntilRevoked);
-        (keeps && !app_id.is_empty() && !sources.is_empty()).then(|| Self {
+    pub fn issue(app_id: &str, sources: Vec<CastSource>, keep: Keep, now: u64) -> Option<Self> {
+        (!app_id.is_empty() && !sources.is_empty()).then(|| Self {
             app_id: app_id.to_owned(),
             sources,
-            mode,
+            keep,
             granted_at: now,
         })
     }
@@ -131,10 +148,9 @@ impl Grant {
     /// Whether the grant still counts at `now`: younger than its mode allows, and not dated in
     /// the future (a clock that moved back, or a file that was edited).
     pub fn valid_at(&self, now: u64) -> bool {
-        let limit = match self.mode {
-            PersistMode::WhileRunning => WHILE_RUNNING_SECS,
-            PersistMode::UntilRevoked => UNTIL_REVOKED_SECS,
-            _ => return false,
+        let limit = match self.keep {
+            Keep::WhileRunning => WHILE_RUNNING_SECS,
+            Keep::UntilRevoked => UNTIL_REVOKED_SECS,
         };
         now.checked_sub(self.granted_at)
             .is_some_and(|age| age <= limit)
@@ -148,8 +164,8 @@ pub struct Remembered {
     pub app_id: String,
     /// When its newest grant was given, in seconds since the Unix epoch.
     pub granted_at: u64,
-    /// The longest mode among its grants.
-    pub mode: PersistMode,
+    /// The longest keep among its grants.
+    pub keep: Keep,
 }
 
 /// Every token this portal remembers.
@@ -229,10 +245,10 @@ impl RestoreBook {
                 .or_insert_with(|| Remembered {
                     app_id: grant.app_id.clone(),
                     granted_at: grant.granted_at,
-                    mode: grant.mode,
+                    keep: grant.keep,
                 });
             entry.granted_at = entry.granted_at.max(grant.granted_at);
-            entry.mode = entry.mode.max(grant.mode);
+            entry.keep = entry.keep.max(grant.keep);
         }
         by_app.into_values().collect()
     }

@@ -9,7 +9,7 @@ use transom::screencast::restore::{FileStore, RestoreStore};
 use transom::settings::DesktopAppearance;
 use transom::{Parts, serve_on};
 use transom_core::restore::Grant;
-use transom_core::{CastSource, PersistMode, RestoreBook, RestoreToken};
+use transom_core::{CastSource, Keep, RestoreBook, RestoreToken};
 use zbus::Connection;
 
 use crate::bus::PrivateBus;
@@ -54,7 +54,7 @@ async fn portal_with_a_grant() -> Option<Portal> {
         Grant {
             app_id: APP.to_owned(),
             sources: vec![CastSource::Output("DP-1".to_owned())],
-            mode: PersistMode::UntilRevoked,
+            keep: Keep::UntilRevoked,
             granted_at: now(),
         },
     );

@@ -2,7 +2,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use transom::screencast::restore::{FileStore, RestoreStore, StoreError};
 use transom_core::restore::Grant;
-use transom_core::{CastSource, PersistMode, RestoreBook, RestoreToken};
+use transom_core::{CastSource, Keep, RestoreBook, RestoreToken};
 
 fn book_of_two() -> RestoreBook {
     let mut book = RestoreBook::new();
@@ -11,7 +11,7 @@ fn book_of_two() -> RestoreBook {
         Grant {
             app_id: "org.example.Meet".into(),
             sources: vec![CastSource::Output("DP-1".into())],
-            mode: PersistMode::UntilRevoked,
+            keep: Keep::UntilRevoked,
             granted_at: 1_800_000_000,
         },
     );
@@ -23,7 +23,7 @@ fn book_of_two() -> RestoreBook {
                 CastSource::Window("a:b\\n".into()),
                 CastSource::Window(String::new()),
             ],
-            mode: PersistMode::WhileRunning,
+            keep: Keep::WhileRunning,
             granted_at: 1_800_000_123,
         },
     );

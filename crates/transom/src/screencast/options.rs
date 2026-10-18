@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use transom_core::{
-    CastSource, CursorMode, Extent, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
+    CastSource, CursorMode, Extent, Keep, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
 };
 use zbus::zvariant::{
     Array, Error as ValueError, OwnedValue, Signature, Structure, StructureBuilder, Value,
@@ -135,12 +135,12 @@ pub fn streams_value(streams: &[StreamInfo]) -> Result<OwnedValue, ValueError> {
 /// `restore_data`.
 pub fn granted_results(
     streams: &[StreamInfo],
-    kept: Option<(PersistMode, &RestoreToken)>,
+    kept: Option<(Keep, &RestoreToken)>,
 ) -> Result<Dict, ValueError> {
     let mut results = Dict::new();
     results.insert("streams".to_owned(), streams_value(streams)?);
-    if let Some((mode, token)) = kept {
-        results.insert("persist_mode".to_owned(), OwnedValue::from(mode.to_wire()));
+    if let Some((keep, token)) = kept {
+        results.insert("persist_mode".to_owned(), OwnedValue::from(keep.to_wire()));
         results.insert("restore_data".to_owned(), restore_data(token)?);
     }
     Ok(results)

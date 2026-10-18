@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use transom_core::{Grant, PersistMode, RestoreBook, RestoreToken};
+use transom_core::{Grant, Keep, RestoreBook, RestoreToken};
 
 use crate::chooser::source_from_wire;
 use crate::fsread::read_text;
@@ -178,7 +178,7 @@ fn encode(book: &RestoreBook) -> String {
         text.push('\t');
         text.push_str(&escape(&grant.app_id));
         text.push('\t');
-        text.push_str(&grant.mode.to_wire().to_string());
+        text.push_str(&grant.keep.to_wire().to_string());
         text.push('\t');
         text.push_str(&grant.granted_at.to_string());
         for source in &grant.sources {
@@ -225,12 +225,7 @@ fn decode_line(line: &str) -> Option<(RestoreToken, Grant)> {
     let mut fields = line.split('\t');
     let token = RestoreToken::parse(fields.next()?)?;
     let app_id = unescape(fields.next()?)?;
-    let mode = fields
-        .next()?
-        .parse()
-        .ok()
-        .and_then(PersistMode::from_wire)
-        .filter(|mode| *mode != PersistMode::DoNot)?;
+    let keep = fields.next()?.parse().ok().and_then(Keep::from_wire)?;
     let granted_at = fields.next()?.parse().ok()?;
     let sources = fields
         .map(|field| {
@@ -243,7 +238,7 @@ fn decode_line(line: &str) -> Option<(RestoreToken, Grant)> {
         Grant {
             app_id,
             sources,
-            mode,
+            keep,
             granted_at,
         },
     ))

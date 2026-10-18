@@ -52,7 +52,7 @@ impl GrantsService {
             .into_iter()
             .map(|app| {
                 let label = self.names.label(&app.app_id);
-                (app.app_id, label, app.mode.to_wire(), app.granted_at)
+                (app.app_id, label, app.keep.to_wire(), app.granted_at)
             })
             .collect())
     }

@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use transom_core::restore::Grant;
 use transom_core::{
-    CastSource, CursorMode, MAX_GRANTS, PersistMode, Remembered, RestoreBook, RestoreToken,
+    CastSource, CursorMode, Keep, MAX_GRANTS, PersistMode, Remembered, RestoreBook, RestoreToken,
     UNTIL_REVOKED_SECS, WHILE_RUNNING_SECS,
 };
 
@@ -40,8 +40,8 @@ proptest! {
     }
 }
 
-fn grant(app: &str, mode: PersistMode, at: u64) -> Grant {
-    Grant::issue(app, vec![out("A"), out("B")], mode, at).expect("a grant")
+fn grant(app: &str, keep: Keep, at: u64) -> Grant {
+    Grant::issue(app, vec![out("A"), out("B")], keep, at).expect("a grant")
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn resolve_is_all_or_nothing_and_per_app() {
     let mut book = RestoreBook::new();
     book.remember(
         token.clone(),
-        grant("org.example.Meet", PersistMode::UntilRevoked, NOW),
+        grant("org.example.Meet", Keep::UntilRevoked, NOW),
     );
     let live_all = [out("A"), out("B"), out("C")];
     let live_less = [out("A"), out("C")];
@@ -76,41 +76,28 @@ fn resolve_is_all_or_nothing_and_per_app() {
 fn a_grant_expires_by_its_mode_and_a_future_date_is_not_trusted() {
     let live = [out("A"), out("B")];
     let table = [
-        (PersistMode::WhileRunning, NOW - 60, true),
-        (PersistMode::WhileRunning, NOW - WHILE_RUNNING_SECS, true),
-        (
-            PersistMode::WhileRunning,
-            NOW - WHILE_RUNNING_SECS - 1,
-            false,
-        ),
-        (
-            PersistMode::UntilRevoked,
-            NOW - WHILE_RUNNING_SECS - 1,
-            true,
-        ),
-        (PersistMode::UntilRevoked, NOW - UNTIL_REVOKED_SECS, true),
-        (
-            PersistMode::UntilRevoked,
-            NOW - UNTIL_REVOKED_SECS - 1,
-            false,
-        ),
-        (PersistMode::UntilRevoked, NOW + 1, false),
+        (Keep::WhileRunning, NOW - 60, true),
+        (Keep::WhileRunning, NOW - WHILE_RUNNING_SECS, true),
+        (Keep::WhileRunning, NOW - WHILE_RUNNING_SECS - 1, false),
+        (Keep::UntilRevoked, NOW - WHILE_RUNNING_SECS - 1, true),
+        (Keep::UntilRevoked, NOW - UNTIL_REVOKED_SECS, true),
+        (Keep::UntilRevoked, NOW - UNTIL_REVOKED_SECS - 1, false),
+        (Keep::UntilRevoked, NOW + 1, false),
     ];
-    for (mode, at, valid) in table {
+    for (keep, at, valid) in table {
         let token = RestoreToken::mint([3; 16]);
         let mut book = RestoreBook::new();
-        book.remember(token.clone(), grant("org.example.Meet", mode, at));
+        book.remember(token.clone(), grant("org.example.Meet", keep, at));
         let got = book.resolve(&token, "org.example.Meet", &live, NOW);
-        assert_eq!(!got.is_empty(), valid, "{mode:?} granted at {at}");
+        assert_eq!(!got.is_empty(), valid, "{keep:?} granted at {at}");
     }
 }
 
 #[test]
 fn an_app_with_no_identity_is_never_remembered() {
     // Every app that arrives with an empty id would share one grant: ask each time instead.
-    assert!(Grant::issue("", vec![out("A")], PersistMode::UntilRevoked, NOW).is_none());
-    assert!(Grant::issue("org.example.Meet", vec![out("A")], PersistMode::DoNot, NOW).is_none());
-    assert!(Grant::issue("org.example.Meet", vec![], PersistMode::UntilRevoked, NOW).is_none());
+    assert!(Grant::issue("", vec![out("A")], Keep::UntilRevoked, NOW).is_none());
+    assert!(Grant::issue("org.example.Meet", vec![], Keep::UntilRevoked, NOW).is_none());
     // Even a grant that somehow sits in the book under an empty id does not resolve for one.
     let token = RestoreToken::mint([4; 16]);
     let mut book = RestoreBook::new();
@@ -119,7 +106,7 @@ fn an_app_with_no_identity_is_never_remembered() {
         Grant {
             app_id: String::new(),
             sources: vec![out("A")],
-            mode: PersistMode::UntilRevoked,
+            keep: Keep::UntilRevoked,
             granted_at: NOW,
         },
     );
@@ -131,18 +118,14 @@ fn pruning_drops_the_expired_and_then_the_oldest_past_the_cap() {
     let mut book = RestoreBook::new();
     book.remember(
         RestoreToken::mint([0xee; 16]),
-        grant(
-            "old",
-            PersistMode::UntilRevoked,
-            NOW - UNTIL_REVOKED_SECS - 5,
-        ),
+        grant("old", Keep::UntilRevoked, NOW - UNTIL_REVOKED_SECS - 5),
     );
     for n in 0..(MAX_GRANTS + 3) {
         let mut bytes = [0_u8; 16];
         bytes[..8].copy_from_slice(&(n as u64).to_be_bytes());
         book.remember(
             RestoreToken::mint(bytes),
-            grant("app", PersistMode::UntilRevoked, NOW - 1000 + n as u64),
+            grant("app", Keep::UntilRevoked, NOW - 1000 + n as u64),
         );
     }
     assert_eq!(book.prune(NOW), 1 + 3, "one expired, three over the cap");
@@ -155,12 +138,13 @@ fn pruning_drops_the_expired_and_then_the_oldest_past_the_cap() {
 fn wire_values_round_trip() {
     for mode in [
         PersistMode::DoNot,
-        PersistMode::WhileRunning,
-        PersistMode::UntilRevoked,
+        PersistMode::Keep(Keep::WhileRunning),
+        PersistMode::Keep(Keep::UntilRevoked),
     ] {
         assert_eq!(PersistMode::from_wire(mode.to_wire()), Some(mode));
     }
     assert_eq!(PersistMode::from_wire(3), None);
+    assert_eq!(Keep::from_wire(0), None, "a stored grant is never 'do not'");
     for mode in [
         CursorMode::Hidden,
         CursorMode::Embedded,
@@ -178,21 +162,21 @@ fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
     let mut book = RestoreBook::new();
     book.remember(
         RestoreToken::mint([1; 16]),
-        grant("org.example.Meet", PersistMode::WhileRunning, NOW - 50),
+        grant("org.example.Meet", Keep::WhileRunning, NOW - 50),
     );
     book.remember(
         RestoreToken::mint([2; 16]),
-        grant("org.example.Meet", PersistMode::UntilRevoked, NOW - 10),
+        grant("org.example.Meet", Keep::UntilRevoked, NOW - 10),
     );
     book.remember(
         RestoreToken::mint([3; 16]),
-        grant("org.example.Rec", PersistMode::UntilRevoked, NOW - 20),
+        grant("org.example.Rec", Keep::UntilRevoked, NOW - 20),
     );
     book.remember(
         RestoreToken::mint([4; 16]),
         grant(
             "org.example.Old",
-            PersistMode::UntilRevoked,
+            Keep::UntilRevoked,
             NOW - UNTIL_REVOKED_SECS - 1,
         ),
     );
@@ -202,12 +186,12 @@ fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
             Remembered {
                 app_id: "org.example.Meet".to_owned(),
                 granted_at: NOW - 10,
-                mode: PersistMode::UntilRevoked,
+                keep: Keep::UntilRevoked,
             },
             Remembered {
                 app_id: "org.example.Rec".to_owned(),
                 granted_at: NOW - 20,
-                mode: PersistMode::UntilRevoked,
+                keep: Keep::UntilRevoked,
             },
         ],
         "one line per app, the newest date, nothing that ran out"

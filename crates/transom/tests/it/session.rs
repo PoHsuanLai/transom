@@ -3,7 +3,7 @@ use transom::screencast::restore::{MemoryStore, RestoreStore};
 
 use transom::peers::{SESSION_LIMITS, Tether, UNSTARTED_TTL};
 use transom::screencast::session::{Refusal, SessionBook, SessionKey};
-use transom_core::PersistMode;
+use transom_core::Keep;
 use transom_core::restore::Grant;
 use transom_core::{CastIn, CastOut, CastSource, PwNode, RestoreBook, RestoreToken};
 
@@ -57,7 +57,7 @@ fn the_memory_store_keeps_what_it_is_given() {
         Grant {
             app_id: "org.example.Meet".into(),
             sources: vec![CastSource::Output("A".into())],
-            mode: PersistMode::UntilRevoked,
+            keep: Keep::UntilRevoked,
             granted_at: 1_800_000_000,
         },
     );

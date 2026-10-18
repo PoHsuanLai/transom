@@ -5,7 +5,7 @@ use transom::screencast::options::{
     StreamInfo, cursor_modes, granted_results, restore_data, restore_token, selection,
 };
 use transom_core::{
-    CastSource, CursorMode, Extent, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
+    CastSource, CursorMode, Extent, Keep, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
 };
 use zbus::zvariant::{OwnedValue, Structure, StructureBuilder, Value};
 
@@ -40,7 +40,7 @@ fn the_selection_reads_each_option() {
         chosen.cursor_modes,
         vec![CursorMode::Embedded, CursorMode::Metadata]
     );
-    assert_eq!(chosen.persist, PersistMode::UntilRevoked);
+    assert_eq!(chosen.persist, PersistMode::Keep(Keep::UntilRevoked));
 }
 
 #[test]
@@ -132,8 +132,7 @@ fn a_granted_reply_carries_streams_and_the_kept_token() {
     assert!(!bare.contains_key("restore_data"));
 
     let token = RestoreToken::mint([3; 16]);
-    let kept =
-        granted_results(&streams, Some((PersistMode::UntilRevoked, &token))).expect("results");
+    let kept = granted_results(&streams, Some((Keep::UntilRevoked, &token))).expect("results");
     assert!(kept.contains_key("restore_data"));
     assert_eq!(
         u32::try_from(kept.get("persist_mode").expect("persist_mode")).ok(),
