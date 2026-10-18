@@ -51,38 +51,40 @@ impl Handout {
 /// session's own is first asked of the compositor as a connection handed to this portal
 /// ([`DisplayName::with_portal_line`]).
 #[derive(Clone, Debug)]
-pub struct DisplayName {
-    name: String,
-    handout: Option<Handout>,
+pub struct DisplayName(Target);
+
+/// What a [`DisplayName`] names.
+#[derive(Clone, Debug)]
+enum Target {
+    /// The session's own display, with the line to ask first, if any.
+    Session { handout: Option<Handout> },
+    /// The socket at this path.
+    At(String),
 }
 
 impl DisplayName {
     /// The session's own display, found the way Wayland clients find theirs.
     pub fn session() -> Self {
-        Self {
-            name: String::new(),
-            handout: None,
-        }
+        Self(Target::Session { handout: None })
     }
 
     /// The display socket at `path`, which must be absolute. A compositor is never asked for a
     /// connection of the portal's own.
     pub fn at(path: impl Into<String>) -> Self {
-        Self {
-            name: path.into(),
-            handout: None,
-        }
+        Self(Target::At(path.into()))
     }
 
     /// This display, with `line` asked first for a connection of the portal's own when the display
     /// is the session's. Where it hands none out, the session's display is used as before.
     pub fn with_portal_line(self, line: Arc<dyn PortalLine>) -> Self {
-        Self {
-            handout: Some(Handout {
-                line,
-                said: Arc::new(OnceLock::new()),
+        match self.0 {
+            Target::Session { .. } => Self(Target::Session {
+                handout: Some(Handout {
+                    line,
+                    said: Arc::new(OnceLock::new()),
+                }),
             }),
-            ..self
+            at @ Target::At(_) => Self(at),
         }
     }
 
@@ -91,10 +93,12 @@ impl DisplayName {
     /// compositor limits how often one caller may make it, so a capture job calls it once
     /// ([`Job`](super::Job)) and runs all its steps on what it gets.
     pub fn route(&self) -> Route {
-        match (self.name.as_str(), &self.handout) {
-            ("", Some(handout)) => handout.route(),
-            ("", None) => Route::Env,
-            (path, _) => Route::Path(path.to_owned()),
+        match &self.0 {
+            Target::Session {
+                handout: Some(handout),
+            } => handout.route(),
+            Target::Session { handout: None } => Route::Env,
+            Target::At(path) => Route::Path(path.clone()),
         }
     }
 }
