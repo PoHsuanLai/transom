@@ -5,14 +5,16 @@ use transom::chooser::{
 };
 use transom::names::AppNames;
 use transom::screencast::Dict;
-use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, SourceKinds};
+use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, Offer, SourceKinds};
 use zbus::zvariant::{OwnedValue, Value};
 
 fn request() -> ChoiceRequest {
     ChoiceRequest {
-        kinds: SourceKinds::Both,
-        multiple: Multiple::One,
-        cursor_modes: vec![CursorMode::Embedded],
+        offer: Offer {
+            kinds: SourceKinds::Both,
+            multiple: Multiple::One,
+            cursor_modes: vec![CursorMode::Embedded],
+        },
         app_label: "Meet".to_owned(),
     }
 }

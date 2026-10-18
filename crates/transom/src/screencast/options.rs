@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use transom_core::{
-    CastSource, CursorMode, Extent, Keep, Multiple, PersistMode, PwNode, RestoreToken, SourceKinds,
+    CastSource, CursorMode, Extent, Keep, Multiple, Offer, PersistMode, PwNode, RestoreToken,
+    SourceKinds,
 };
 use zbus::zvariant::{
     Array, Error as ValueError, OwnedValue, Signature, Structure, StructureBuilder, Value,
@@ -35,9 +36,11 @@ pub fn selection(options: &Dict) -> Selection {
             if many { Multiple::Many } else { Multiple::One }
         });
     Selection {
-        kinds: SourceKinds::from_wire(u32_of(options, "types").unwrap_or(1)),
-        multiple,
-        cursor_modes: cursor_modes(u32_of(options, "cursor_mode").unwrap_or(1)),
+        offer: Offer {
+            kinds: SourceKinds::from_wire(u32_of(options, "types").unwrap_or(1)),
+            multiple,
+            cursor_modes: cursor_modes(u32_of(options, "cursor_mode").unwrap_or(1)),
+        },
         persist: u32_of(options, "persist_mode")
             .and_then(PersistMode::from_wire)
             .unwrap_or(PersistMode::DoNot),

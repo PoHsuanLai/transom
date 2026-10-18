@@ -21,7 +21,7 @@ pub mod restore;
 pub mod screencast;
 pub mod settings_values;
 
-pub use choice::{Choice, ChoiceRefusal, ChoiceRequest, Multiple, SourceKinds};
+pub use choice::{Choice, ChoiceRefusal, ChoiceRequest, Multiple, Offer, SourceKinds};
 pub use inhibit::{BookChange, InhibitBook, InhibitFlags, RequestHandle};
 pub use layout::{Extent, OutputFacts, Point, Tile, Turn, arrange};
 pub use pacing::{FrameRate, Held, Negotiated, Step, decide};

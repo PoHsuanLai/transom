@@ -59,15 +59,23 @@ pub enum Multiple {
     Many,
 }
 
-/// What the chooser is asked.
+/// What an app offers to share: the kinds of source, one or several, and the cursor modes it
+/// allows (the person's pick must be one of them).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChoiceRequest {
+pub struct Offer {
     /// The kinds to offer.
     pub kinds: SourceKinds,
     /// One or several.
     pub multiple: Multiple,
     /// The cursor modes the app allows; the person's pick must be one of them.
     pub cursor_modes: Vec<CursorMode>,
+}
+
+/// What the chooser is asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChoiceRequest {
+    /// What the app offers.
+    pub offer: Offer,
     /// The app's name as the person knows it (never a bundle or bus name), for the chooser's
     /// title.
     pub app_label: String,
@@ -113,10 +121,10 @@ impl ChoiceRequest {
         if sources.is_empty() {
             return Err(ChoiceRefusal::Empty);
         }
-        if self.multiple == Multiple::One && sources.len() > 1 {
+        if self.offer.multiple == Multiple::One && sources.len() > 1 {
             return Err(ChoiceRefusal::TooMany);
         }
-        if !sources.iter().all(|s| self.kinds.offers(s)) {
+        if !sources.iter().all(|s| self.offer.kinds.offers(s)) {
             return Err(ChoiceRefusal::WrongKind);
         }
         let mut seen = sources.clone();
@@ -125,7 +133,7 @@ impl ChoiceRequest {
         if seen.len() != sources.len() {
             return Err(ChoiceRefusal::Duplicate);
         }
-        if !self.cursor_modes.contains(&cursor) {
+        if !self.offer.cursor_modes.contains(&cursor) {
             return Err(ChoiceRefusal::CursorNotAllowed);
         }
         Ok(Choice { sources, cursor })

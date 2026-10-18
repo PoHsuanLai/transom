@@ -123,13 +123,18 @@ impl Chooser for ShellChooser {
     ) -> BoxFuture<'a, Result<Option<Choice>, ShellError>> {
         Box::pin(async move {
             let Door { shell, mut watch } = Door::open(&self.link).await?;
-            let cursor_modes = request.cursor_modes.iter().map(|m| m.to_wire()).collect();
+            let cursor_modes = request
+                .offer
+                .cursor_modes
+                .iter()
+                .map(|m| m.to_wire())
+                .collect();
             let (sources, cursor) = answered(
                 &mut watch,
                 shell.pick_capture_source(
                     &request.app_label,
-                    request.kinds.to_wire(),
-                    multiple_to_wire(request.multiple),
+                    request.offer.kinds.to_wire(),
+                    multiple_to_wire(request.offer.multiple),
                     cursor_modes,
                 ),
             )

@@ -173,6 +173,7 @@ impl Shared {
         connection: &Connection,
     ) -> Response {
         let mut cursor = selection
+            .offer
             .cursor_modes
             .first()
             .copied()
@@ -218,9 +219,7 @@ impl Shared {
     /// shell to ask the answer is a cancel, never a share.
     async fn ask(&self, selection: &Selection, app_id: &str) -> Asked {
         let request = ChoiceRequest {
-            kinds: selection.kinds,
-            multiple: selection.multiple,
-            cursor_modes: selection.cursor_modes.clone(),
+            offer: selection.offer.clone(),
             app_label: self.names.label(app_id),
         };
         match unavailable_is_cancel(self.chooser.pick(&request).await) {
@@ -351,7 +350,7 @@ impl Shared {
         })
         .await
         .unwrap_or_default();
-        if sources.iter().all(|s| selection.kinds.offers(s)) {
+        if sources.iter().all(|s| selection.offer.kinds.offers(s)) {
             sources
         } else {
             Vec::new()

@@ -13,7 +13,7 @@ use transom::screencast::restore::FileStore;
 use transom::screenshot::{ColorPicker, ShellColorPicker};
 use transom::settings::DesktopAppearance;
 use transom::{BUS_NAME, Parts, serve_on};
-use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, SourceKinds};
+use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, Offer, SourceKinds};
 use zbus::message::Header;
 use zbus::names::BusName;
 use zbus::{Connection, fdo};
@@ -94,9 +94,11 @@ async fn shell_on(bus: &PrivateBus) -> Connection {
 
 fn request() -> ChoiceRequest {
     ChoiceRequest {
-        kinds: SourceKinds::Outputs,
-        multiple: Multiple::One,
-        cursor_modes: vec![CursorMode::Hidden],
+        offer: Offer {
+            kinds: SourceKinds::Outputs,
+            multiple: Multiple::One,
+            cursor_modes: vec![CursorMode::Hidden],
+        },
         app_label: "Meet".to_owned(),
     }
 }

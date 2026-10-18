@@ -3,11 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use transom_core::{
-    CastIn, CastOut, CastSession, CursorMode, PersistMode, RestoreToken,
-    choice::{Multiple, SourceKinds},
-    step,
-};
+use transom_core::{CastIn, CastOut, CastSession, Offer, PersistMode, RestoreToken, step};
 
 use crate::peers::{Admission, SESSION_LIMITS, Tether, UNSTARTED_TTL, admit};
 
@@ -18,12 +14,9 @@ pub struct SessionKey(pub String);
 /// What the app said at `SelectSources`, kept until `Start`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
-    /// The kinds it asked for.
-    pub kinds: SourceKinds,
-    /// One source or several.
-    pub multiple: Multiple,
-    /// The cursor modes it allows; the first is its preference.
-    pub cursor_modes: Vec<CursorMode>,
+    /// The kinds it asked for, one source or several, and the cursor modes it allows (the first
+    /// is its preference).
+    pub offer: Offer,
     /// Whether to hand back a restore token.
     pub persist: PersistMode,
     /// The restore token the app brought, if it brought one of ours.

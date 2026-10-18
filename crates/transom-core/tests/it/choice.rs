@@ -1,4 +1,4 @@
-use transom_core::choice::{ChoiceRefusal, ChoiceRequest, Multiple, SourceKinds};
+use transom_core::choice::{ChoiceRefusal, ChoiceRequest, Multiple, Offer, SourceKinds};
 use transom_core::{CastSource, CursorMode};
 
 fn out(name: &str) -> CastSource {
@@ -11,9 +11,11 @@ fn win(id: &str) -> CastSource {
 
 fn request(kinds: SourceKinds, multiple: Multiple) -> ChoiceRequest {
     ChoiceRequest {
-        kinds,
-        multiple,
-        cursor_modes: vec![CursorMode::Hidden, CursorMode::Embedded],
+        offer: Offer {
+            kinds,
+            multiple,
+            cursor_modes: vec![CursorMode::Hidden, CursorMode::Embedded],
+        },
         app_label: "Meet".to_owned(),
     }
 }
