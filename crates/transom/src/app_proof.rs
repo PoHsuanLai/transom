@@ -22,7 +22,7 @@
 use std::fmt;
 use std::path::Path;
 
-use peephole_bus::peephole::{ProcFs, RealProc, dirs_trust, weaker};
+use peephole_bus::peephole::{RealProc, path_trust};
 use peephole_bus::peephole_core::{ExePath, FileTrust, Standing};
 
 use crate::BoxFuture;
@@ -102,10 +102,10 @@ pub struct RealRoot;
 
 impl RootHeld for RealRoot {
     fn holds(&self, path: &Path) -> bool {
-        let fs = RealProc::system();
-        let file = fs.trust_of(path);
-        let above = dirs_trust(&fs, path);
-        matches!((file, above), (Ok(file), Ok(above)) if weaker(above, file) == FileTrust::RootOnly)
+        matches!(
+            path_trust(&RealProc::system(), path),
+            Ok(FileTrust::RootOnly)
+        )
     }
 }
 

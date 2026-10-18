@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use peephole_bus::peephole::RealProc;
 use peephole_bus::peephole_core::{Proof, Refused, Requirement, RoleName, Table, roles};
-use peephole_bus::{BusPeers, ManagerCheck, ManagerLink, Tokio, access_denied};
+use peephole_bus::{BusPeers, ManagerCheck, ManagerLink, Offload, access_denied};
 use zbus::export::futures_core::Stream;
 use zbus::message::Header;
 use zbus::names::BusName;
@@ -32,13 +32,13 @@ use crate::{PORTAL_PATH, TransomError};
 
 /// How callers on the bus are told apart: their process, held by a pidfd, judged against the
 /// caller table. The probe runs on tokio's blocking pool.
-pub type Peers = BusPeers<RealProc, Tokio, ManagerLink<RealProc>>;
+pub type Peers = BusPeers<RealProc, ManagerLink<RealProc>>;
 
 /// [`Peers`] on `connection`, judging against `table`. The unit manager's answers are believed
 /// only when the manager's own image is the system's (role `manager`, proved by its image).
 pub fn peers_on(connection: Connection, table: Table) -> Peers {
     let manager = ManagerCheck::Verified(Requirement::new(roles::MANAGER, Proof::Exe));
-    BusPeers::new(connection, table, manager).with_offload(Tokio)
+    BusPeers::new(connection, table, manager).with_offload(Offload::Tokio)
 }
 
 /// What lets a caller in as `role`: the role proved `Full` (its image and its unit, as the unit

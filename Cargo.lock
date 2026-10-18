@@ -690,8 +690,8 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "peephole"
-version = "0.1.6"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.6#87a3d225d7526d03f16acff2245374cb00a27e24"
+version = "0.1.8"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.8#bba63d4761b750c0789ca7689df4b86e5213905f"
 dependencies = [
  "nix",
  "peephole-core",
@@ -701,8 +701,8 @@ dependencies = [
 
 [[package]]
 name = "peephole-bus"
-version = "0.1.6"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.6#87a3d225d7526d03f16acff2245374cb00a27e24"
+version = "0.1.8"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.8#bba63d4761b750c0789ca7689df4b86e5213905f"
 dependencies = [
  "futures-timer",
  "peephole",
@@ -714,8 +714,8 @@ dependencies = [
 
 [[package]]
 name = "peephole-core"
-version = "0.1.6"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.6#87a3d225d7526d03f16acff2245374cb00a27e24"
+version = "0.1.8"
+source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.8#bba63d4761b750c0789ca7689df4b86e5213905f"
 dependencies = [
  "serde",
  "thiserror",
