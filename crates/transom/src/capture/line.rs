@@ -16,7 +16,6 @@ mod fake;
 
 use std::fmt;
 use std::os::fd::OwnedFd;
-use std::sync::Arc;
 use std::time::Duration;
 
 pub use self::casement::CasementLine;
@@ -51,8 +50,3 @@ pub trait PortalLine: Send + Sync + fmt::Debug {
     fn open(&self) -> Result<OwnedFd, LineError>;
 }
 
-impl<T: PortalLine + ?Sized> PortalLine for Arc<T> {
-    fn open(&self) -> Result<OwnedFd, LineError> {
-        (**self).open()
-    }
-}

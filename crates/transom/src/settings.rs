@@ -136,16 +136,6 @@ pub fn parse_appearance(text: &str) -> Appearance {
     found
 }
 
-/// A source that serves a fixed appearance, for tests.
-#[derive(Debug)]
-pub struct FixedAppearance(pub Appearance);
-
-impl AppearanceSource for FixedAppearance {
-    fn current(&self) -> Result<Appearance, AppearanceError> {
-        Ok(self.0)
-    }
-}
-
 /// `a{sa{sv}}`: namespace to key to value.
 pub type Namespaces = HashMap<String, HashMap<String, OwnedValue>>;
 

@@ -90,16 +90,6 @@ impl AppProver for NoProof {
     }
 }
 
-/// Proves everybody. For tests of other things than this.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AllProven;
-
-impl AppProver for AllProven {
-    fn prove<'a>(&'a self, _session: &'a str, _app_id: &'a str) -> BoxFuture<'a, AppProof> {
-        Box::pin(async { AppProof::Proven })
-    }
-}
-
 /// Whether a file is one only root can have written.
 pub trait RootHeld: Send + Sync + fmt::Debug {
     /// `true` when the file at `path` and every folder above it is root's alone.
@@ -131,27 +121,27 @@ impl RootHeld for TrustAll {
 
 /// Proves an app from the program on the other end of its bus connection.
 #[derive(Debug)]
-pub struct PeerProver<R = RealRoot> {
+pub struct PeerProver {
     link: BusLink,
     names: AppNames,
-    root: R,
+    root: Box<dyn RootHeld>,
 }
 
-impl PeerProver<RealRoot> {
+impl PeerProver {
     /// A prover asking through `link`, finding desktop entries with `names`.
     pub fn new(link: BusLink, names: AppNames) -> Self {
         Self::with_root(link, names, RealRoot)
     }
 }
 
-impl<R: RootHeld> PeerProver<R> {
+impl PeerProver {
     /// As [`PeerProver::new`], with `root` deciding which files are root's.
-    pub fn with_root(link: BusLink, names: AppNames, root: R) -> Self {
-        Self { link, names, root }
+    pub fn with_root(link: BusLink, names: AppNames, root: impl RootHeld + 'static) -> Self {
+        Self { link, names, root: Box::new(root) }
     }
 }
 
-impl<R: RootHeld + 'static> AppProver for PeerProver<R> {
+impl AppProver for PeerProver {
     fn prove<'a>(&'a self, session: &'a str, app_id: &'a str) -> BoxFuture<'a, AppProof> {
         Box::pin(async move {
             let Some(sender) = sender_of(session) else {
@@ -161,7 +151,7 @@ impl<R: RootHeld + 'static> AppProver for PeerProver<R> {
                 return AppProof::Unproven(Why::NoProver);
             };
             match peers.who(&sender).await {
-                Ok(standing) => judge_app(&standing, app_id, &self.names, &self.root),
+                Ok(standing) => judge_app(&standing, app_id, &self.names, self.root.as_ref()),
                 Err(error) => {
                     tracing::info!(%error, "the app could not be identified, so it is not remembered");
                     AppProof::Unproven(Why::Unidentified)
