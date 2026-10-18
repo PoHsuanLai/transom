@@ -108,6 +108,18 @@ const MAX_BODY: usize = 1024;
 const MAX_BUTTON: usize = 32;
 
 impl Question {
+    /// A plain yes-or-no question with the default buttons and no subtitle.
+    pub fn yes_no(app_label: &str, title: &str, body: String) -> Self {
+        Self {
+            app_label: app_label.to_owned(),
+            title: title.to_owned(),
+            subtitle: String::new(),
+            body,
+            grant_label: GRANT_LABEL.to_owned(),
+            deny_label: DENY_LABEL.to_owned(),
+        }
+    }
+
     /// The question a call carries: the texts as given but cleaned and cut (an app wrote them), the
     /// app by `app_label` (already its own name, see [`AppNames::label`]), and the buttons the
     /// request names (or "Allow" and "Don't Allow").

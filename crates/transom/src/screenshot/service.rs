@@ -54,14 +54,11 @@ fn asks(options: &Dict) -> Asks {
 
 /// The question for a picture of the whole screen.
 fn screenshot_question(app_label: &str) -> Question {
-    Question {
-        app_label: app_label.to_owned(),
-        title: "Allow a screenshot?".to_owned(),
-        subtitle: String::new(),
-        body: format!("{app_label} wants to take a picture of everything showing on your screen."),
-        grant_label: "Allow".to_owned(),
-        deny_label: "Don\u{2019}t Allow".to_owned(),
-    }
+    Question::yes_no(
+        app_label,
+        "Allow a screenshot?",
+        format!("{app_label} wants to take a picture of everything showing on your screen."),
+    )
 }
 
 fn owned(value: impl Into<Value<'static>>) -> Option<OwnedValue> {

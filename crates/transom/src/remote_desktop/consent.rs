@@ -52,18 +52,15 @@ impl<T: Consent + ?Sized> Consent for Arc<T> {
 
 /// The question the person sees: which app, and which input it would take over.
 pub fn remote_control_question(app_label: &str, kinds: DeviceKinds) -> Question {
-    Question {
-        app_label: app_label.to_owned(),
-        title: "Allow control of your computer?".to_owned(),
-        subtitle: String::new(),
-        body: format!(
+    Question::yes_no(
+        app_label,
+        "Allow control of your computer?",
+        format!(
             "{app_label} wants to use your {} to type and click as if it were you. \
              Only allow this for apps you trust.",
             kinds.phrase()
         ),
-        grant_label: "Allow".to_owned(),
-        deny_label: "Don\u{2019}t Allow".to_owned(),
-    }
+    )
 }
 
 /// The real consent: the shell's yes-or-no sheet. A screen-sharing pick is never a yes; with no
