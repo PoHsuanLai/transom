@@ -23,7 +23,7 @@ pub use self::effect::{
     EffectError, FakeEffect, InhibitEffect, LOGIND_DEADLINE, LogindInhibitor, logind_what,
 };
 pub use self::hub::{
-    HoldError, InhibitHub, MAX_MONITORS, MonitorAdded, MonitorKnown, MonitorState,
+    HoldError, InhibitHub, MAX_MONITORS, MonitorAdded, MonitorKnown, MonitorState, QueryEnd,
 };
 use crate::peers::{Creator, FrontendOnly, Tether};
 use crate::screencast::Dict;

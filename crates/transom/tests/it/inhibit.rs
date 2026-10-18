@@ -1,7 +1,7 @@
 use transom::BoxFuture;
 use transom::inhibit::{
     EffectError, FakeEffect, HoldError, InhibitEffect, InhibitHub, MAX_MONITORS, MonitorAdded,
-    MonitorKnown, logind_what,
+    MonitorKnown, QueryEnd, logind_what,
 };
 use transom::peers::{HOLD_LIMITS, Tether};
 use transom_core::{InhibitFlags, RequestHandle};
@@ -57,7 +57,10 @@ async fn a_monitor_is_known_until_removed() {
     assert_eq!(hub.add_monitor("/s"), MonitorAdded::New);
     assert_eq!(hub.add_monitor("/s"), MonitorAdded::AlreadyThere);
     assert_eq!(hub.note_answer("/s"), MonitorKnown::Known);
-    assert!(hub.monitor("/s").expect("monitor").answered_query_end);
+    assert_eq!(
+        hub.monitor("/s").expect("monitor").query_end,
+        QueryEnd::Answered
+    );
     hub.remove_monitor("/s");
     assert!(hub.monitor("/s").is_none());
 }

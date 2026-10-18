@@ -26,7 +26,17 @@ pub enum HoldError {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MonitorState {
     /// Whether the app answered the end-of-session query.
-    pub answered_query_end: bool,
+    pub query_end: QueryEnd,
+}
+
+/// Whether the app has answered the end-of-session query.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueryEnd {
+    /// Not yet.
+    #[default]
+    Pending,
+    /// It answered.
+    Answered,
 }
 
 /// The held requests, the effect on the session and the monitors.
@@ -140,7 +150,7 @@ impl InhibitHub {
     pub fn note_answer(&mut self, session: &str) -> MonitorKnown {
         match self.monitors.get_mut(session) {
             Some(state) => {
-                state.answered_query_end = true;
+                state.query_end = QueryEnd::Answered;
                 MonitorKnown::Known
             }
             None => MonitorKnown::Unknown,
