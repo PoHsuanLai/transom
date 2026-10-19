@@ -36,7 +36,7 @@ image = { version = "0.25.6", default-features = false, features = ["png"] }
 # zbus runs on tokio here, so the default executor feature is off. `fake` is a dev-only addition; `dev-rows`
 # (a person's own rows file, `Proof::Dev`) is only behind the transom crate's `debug` feature, so no shipped
 # build has it.
-peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.8", default-features = false, features = ["tokio", "desktop"] }
+peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.9", default-features = false, features = ["tokio", "desktop"] }
 proptest = "1"
 tempfile = "3"
 
