@@ -22,10 +22,10 @@ Inside `transom` only these modules name the heavy crates: `capture/` the Waylan
 ## 2. Layout
 
 ```
-crates/transom-core/src/{lib, screencast, restore, choice, inhibit, layout, pacing, settings_values}.rs
-crates/transom/src/{lib, main, error, link, peers, table, dev_rows (feature debug), shell, names, fsread, random, chooser, screenshot, settings, access}.rs
+crates/transom-core/src/{lib, screencast, restore, devices, choice, inhibit, layout, pacing, settings_values}.rs
+crates/transom/src/{lib, main, error, link, peers, table, dev_rows (feature debug), shell, names, fsread, random, chooser, screenshot, settings, access, keeper}.rs
                    screenshot/{layout, color, service}.rs
-                   remote_desktop/{mod, book, sessions, object, consent, eis, devices}.rs
+                   remote_desktop/{mod, book, sessions, object, consent, eis}.rs
                    inhibit/{mod, hub, effect}.rs
                    screencast/{mod, flow, options, run, session, stream, pipewire, pixels, restore}.rs
                    capture/{mod, display, fake, job, line, output, toplevel, wl}.rs  capture/line/{casement, fake}.rs  capture/wl/{outputs, wait, wire}.rs
@@ -174,10 +174,23 @@ proved `Full`), `peers.who` says who is on it, and:
 - a sandboxed app (the sandbox's metadata agrees with its control group) whose sandbox names the id is remembered;
 - a host program whose image is root-owned and is the program the id's desktop entry runs, the entry being
   root's to write (the first entry found decides, so one in the person's home registers nothing), is remembered;
+- a host program that gives **no id at all** (started by a system service, so no launcher scope names it) is told by
+  its program: when exactly one desktop entry, root's to write, runs the calling image, that entry's id is the app's. No
+  entry, several, or too many to search (`names::AppNames::running`: 4096 entries, 16 MiB) leave it unproven;
 - anything else, a host app that only declares an id included, gets the sheet every time and no token.
+
+The proof carries the id (`AppProof::Proven(id)`), and that proven id, not the empty one the frontend passed, is what
+the grant is kept under, the restore token is checked against, `Portal1` lists and revokes, and the dialog shows.
 
 `Parts.prover` is `None` in a real run, which `serve` turns into the `PeerProver`; a service built with no prover
 (`ScreenCastService::new`) remembers nobody.
+
+Remote control remembers the same way. `RemoteDesktop.SelectDevices` takes `persist_mode` and `restore_data`; a proven
+app that asks to be remembered gets both back in the `Start` results, and an app that offers a token for the same or
+fewer device kinds than it was given is let in without the question. The grant (`restore::InputGrant`) lives in the
+same book as the screen grants, behind the same `keeper::Keeper` (one lock, one file), so `ListGrants` shows one line
+per app and `Revoke` takes back both kinds. `serve` gives `RemoteDesktopService::with_memory` the screen-sharing
+service's keeper and prover.
 
 ### Taking a remembered share back (NEW-PI-7)
 

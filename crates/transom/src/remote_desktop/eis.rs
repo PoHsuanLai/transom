@@ -6,9 +6,9 @@ use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use super::devices::DeviceKinds;
 use crate::BoxFuture;
 use crate::link::BusLink;
+use transom_core::DeviceKinds;
 
 /// How long the compositor has to hand out or take back a socket before the attempt is dropped:
 /// it is a local call that answers at once, so a longer wait means it is stuck.

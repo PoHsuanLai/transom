@@ -84,7 +84,8 @@ Not compiled; the orchestrator gates. `remote_desktop.rs` has no `todo!()`.
 - **Open: combined sessions.** An app that shares a screen and controls it in one session expects `streams` in the `Start`
   reply. `ScreenCastService` keeps its `SessionBook` private, so this service cannot reach it; today `Start` answers `devices`
   only. The orchestrator can close this after P2-T2 with a shared book (or a `streams_for(&SessionKey)` on the screencast
-  service). `persist_mode` and `restore_data` are not honoured (no `restore_data` is returned).
+  service). `persist_mode` and `restore_data` are honoured for the input part (see ARCHITECTURE 4d); the screen part of a
+  combined session keeps its own token through ScreenCast.
 - **Open: request objects.** `Start` waits for the person; the frontend cancels it with `Request.Close` on `handle`, which no
   interface here serves yet (same for ScreenCast and Screenshot).
 - **Open: acceptance.** `dev/accept/remote-desktop.sh` is still a skeleton: it needs a stub `org.quire.Shell1` on the private

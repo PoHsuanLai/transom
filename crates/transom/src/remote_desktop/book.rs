@@ -2,7 +2,8 @@
 
 use std::time::Instant;
 
-use super::devices::DeviceKinds;
+use transom_core::{DeviceKinds, PersistMode, RestoreToken};
+
 use crate::peers::Tether;
 use crate::table::{Refusal, SessionKey, Slot, Table};
 
@@ -34,6 +35,10 @@ pub(super) struct Entry {
     pub id: u64,
     pub app_id: String,
     pub kinds: DeviceKinds,
+    /// How long the app asked for the person's yes to be remembered.
+    pub persist: PersistMode,
+    /// The token the app offers to be let in again without being asked.
+    pub restore: Option<RestoreToken>,
     pub stage: Stage,
     /// The peers the session hangs on: when one leaves the bus the session ends.
     pub tether: Tether,
@@ -91,6 +96,8 @@ impl Book {
                 id: *next,
                 app_id: app_id.to_owned(),
                 kinds: DeviceKinds::ALL,
+                persist: PersistMode::DoNot,
+                restore: None,
                 stage: Stage::Created,
                 tether,
                 opened: now,

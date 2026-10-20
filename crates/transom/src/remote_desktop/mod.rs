@@ -16,7 +16,6 @@
 
 mod book;
 pub mod consent;
-mod devices;
 pub mod eis;
 mod object;
 mod sessions;
@@ -24,26 +23,36 @@ mod sessions;
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
+use transom_core::{DEVICE_TYPES, PersistMode};
 use zbus::fdo;
 use zbus::message::Header;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 pub use self::consent::remote_control_question;
-use self::devices::DEVICE_TYPES;
-pub use self::devices::DeviceKinds;
 pub use self::eis::{CasementEis, EisError, EisHandout, FakeEis};
 use self::object::SessionObject;
 pub use self::sessions::ConnectError;
-use self::sessions::{Core, Settled, Verdict};
+use self::sessions::{Asking, Core, Settled, Verdict, Wanted};
 use crate::access::{Answer, Asker};
+use crate::app_proof::{AppProver, Who};
+use crate::keeper::{Keeper, Kept, unix_now};
 use crate::names::AppNames;
 use crate::peers::{RoleGuard, Tether};
 use crate::response::Response;
 use crate::screencast::Dict;
+use crate::screencast::options::{restore_data, restore_token};
 use crate::table::{Refusal, SessionKey};
+pub use transom_core::DeviceKinds;
 
 /// The answer to a call: the portal's response code and its results.
 pub type Reply = (u32, Dict);
+
+/// What lets the service remember a yes: the book, and who says which apps are what they claim.
+#[derive(Debug)]
+struct Memory {
+    keeper: Arc<Keeper>,
+    prover: Arc<dyn AppProver>,
+}
 
 /// The served interface.
 #[derive(Debug)]
@@ -52,6 +61,8 @@ pub struct RemoteDesktopService {
     asker: Box<dyn Asker>,
     names: AppNames,
     guard: RoleGuard,
+    /// Without it nothing is remembered and every session is asked about.
+    memory: Option<Memory>,
 }
 
 impl RemoteDesktopService {
@@ -64,7 +75,17 @@ impl RemoteDesktopService {
             asker,
             names: AppNames::none(),
             guard: RoleGuard::default(),
+            memory: None,
         }
+    }
+
+    /// This service remembering a yes in `keeper` for the apps `prover` shows to be what their
+    /// ids say (or, for an app with no id, which app it is), and no others. Use the screen-sharing
+    /// service's keeper and prover, so both share one book and one list. Without it nothing is
+    /// remembered.
+    pub fn with_memory(mut self, keeper: Arc<Keeper>, prover: Arc<dyn AppProver>) -> Self {
+        self.memory = Some(Memory { keeper, prover });
+        self
     }
 
     /// This service letting through the callers `guard` admits. Without it, no wire call passes.
@@ -132,12 +153,22 @@ impl RemoteDesktopService {
         }
     }
 
-    /// Records the `types` the app wants (all, when it says nothing). Only before `Start`.
+    /// Records the `types` the app wants (all, when it says nothing), how long it asks for the
+    /// yes to be remembered (`persist_mode`, not at all when it says nothing) and the token it
+    /// offers (`restore_data`). Only before `Start`.
     pub fn select(&self, key: &SessionKey, options: &Dict) -> Reply {
-        let wanted = options
-            .get("types")
-            .and_then(|value| value.downcast_ref::<u32>().ok())
-            .map_or(DeviceKinds::ALL, DeviceKinds::from_wire);
+        let number = |name: &str| {
+            options
+                .get(name)
+                .and_then(|value| value.downcast_ref::<u32>().ok())
+        };
+        let wanted = Wanted {
+            kinds: number("types").map_or(DeviceKinds::ALL, DeviceKinds::from_wire),
+            persist: number("persist_mode")
+                .and_then(PersistMode::from_wire)
+                .unwrap_or(PersistMode::DoNot),
+            restore: restore_token(options),
+        };
         match self.core.select(key, wanted) {
             Settled::Applied => Response::granted().into_wire(),
             Settled::Gone => failed(),
@@ -147,20 +178,38 @@ impl RemoteDesktopService {
     /// Asks the person and, on a yes, answers with the devices granted. A no is response 1.
     /// Without anyone to ask nothing is granted (response 2). The yes is bound to this very
     /// session: one closed and opened again while the person decided does not inherit it.
+    ///
+    /// An app that is shown to be what it says, and offers the token of an earlier yes for the
+    /// same devices or fewer, is not asked. One that asks to be remembered gets a token with its
+    /// yes.
     pub async fn begin(&self, key: &SessionKey) -> Reply {
         let Some(asking) = self.core.start_asking(key) else {
             return failed();
         };
-        let label = self.names.label(&asking.app_id);
+        let who = self.identify(key, &asking.app_id).await;
         let settle = |verdict| self.core.settle(key, asking.id, verdict);
-        let question = remote_control_question(&label, asking.kinds);
-        match self.asker.ask(&question).await {
+        let restored = self.restored_kinds(&asking, &who).await;
+        let answer = if restored.is_empty() {
+            let label = self.names.label(&who.shown);
+            let question = remote_control_question(&label, asking.kinds);
+            self.asker.ask(&question).await
+        } else {
+            Ok(Answer::Granted)
+        };
+        match answer {
             Ok(Answer::Granted) => match settle(Verdict::Allow) {
                 Settled::Applied => {
                     let mut results = Dict::new();
                     if let Some(devices) = owned(asking.kinds.to_wire()) {
                         results.insert("devices".to_owned(), devices);
                     }
+                    // It is remembered for all the earlier yes covered, not only what this call asked for.
+                    let covered = if restored.is_empty() {
+                        asking.kinds
+                    } else {
+                        restored
+                    };
+                    self.keep(&asking, &who, covered, &mut results).await;
                     Response::Granted(results).into_wire()
                 }
                 // Closed while the person was deciding.
@@ -175,6 +224,58 @@ impl RemoteDesktopService {
                 settle(Verdict::Retract);
                 failed()
             }
+        }
+    }
+
+    /// Who the app of the session `key` is, as far as it is shown: an app is shown to be what it
+    /// says only when the service can remember, and its prover says so.
+    async fn identify(&self, key: &SessionKey, app_id: &str) -> Who {
+        match &self.memory {
+            Some(memory) => Who::identify(memory.prover.as_ref(), &key.0, app_id).await,
+            None => Who {
+                shown: app_id.to_owned(),
+                proven: None,
+            },
+        }
+    }
+
+    /// The kinds the earlier yes offered by `asking` covers, if it covers all those wanted; else
+    /// none.
+    async fn restored_kinds(&self, asking: &Asking, who: &Who) -> DeviceKinds {
+        let (Some(memory), Some(token), Some(app_id)) =
+            (&self.memory, asking.restore.as_ref(), who.proven.as_deref())
+        else {
+            return DeviceKinds::NONE;
+        };
+        memory
+            .keeper
+            .book()
+            .await
+            .resolve_input(token, app_id, asking.kinds, unix_now())
+    }
+
+    /// Remember the yes when the app asked to be remembered and is shown to be what it says, and
+    /// put the new token in `results`. It is remembered for the `covered` kinds, and the token it
+    /// replaces is forgotten.
+    async fn keep(&self, asking: &Asking, who: &Who, covered: DeviceKinds, results: &mut Dict) {
+        let (Some(memory), PersistMode::Keep(keep), Some(app_id)) =
+            (&self.memory, asking.persist, who.proven.as_deref())
+        else {
+            return;
+        };
+        let kept = Kept::Input(covered);
+        let Some(token) = memory
+            .keeper
+            .keep(app_id, kept, keep, asking.restore.clone())
+            .await
+        else {
+            return;
+        };
+        if let Ok(data) = restore_data(&token)
+            && let Some(mode) = owned(keep.to_wire())
+        {
+            results.insert("persist_mode".to_owned(), mode);
+            results.insert("restore_data".to_owned(), data);
         }
     }
 

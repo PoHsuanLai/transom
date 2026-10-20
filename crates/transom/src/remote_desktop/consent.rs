@@ -3,7 +3,8 @@
 //! The question is its own: it says which input the app would take over, in plain words. It is
 //! never the screen-sharing picker, because picking a screen to share is not saying yes to this.
 
-use super::devices::DeviceKinds;
+use transom_core::DeviceKinds;
+
 use crate::access::Question;
 
 /// The question the person sees: which app, and which input it would take over.

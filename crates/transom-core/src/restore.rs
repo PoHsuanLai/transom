@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::devices::DeviceKinds;
 use crate::screencast::CastSource;
 
 /// How long a stored grant is remembered. The wire values are the portal's: 1 and 2.
@@ -133,6 +134,16 @@ pub struct Grant {
     pub granted_at: u64,
 }
 
+/// Whether a grant of `keep` given at `granted_at` still counts at `now`: younger than its mode
+/// allows, and not dated in the future (a clock that moved back, or a file that was edited).
+fn counts(keep: Keep, granted_at: u64, now: u64) -> bool {
+    let limit = match keep {
+        Keep::WhileRunning => WHILE_RUNNING_SECS,
+        Keep::UntilRevoked => UNTIL_REVOKED_SECS,
+    };
+    now.checked_sub(granted_at).is_some_and(|age| age <= limit)
+}
+
 impl Grant {
     /// The grant to remember for `app_id`, or `None` when none may be kept: the app has no identity (an empty app id is shared by every app that has none), or
     /// shared nothing.
@@ -145,15 +156,41 @@ impl Grant {
         })
     }
 
-    /// Whether the grant still counts at `now`: younger than its mode allows, and not dated in
-    /// the future (a clock that moved back, or a file that was edited).
+    /// Whether the grant still counts at `now`.
     pub fn valid_at(&self, now: u64) -> bool {
-        let limit = match self.keep {
-            Keep::WhileRunning => WHILE_RUNNING_SECS,
-            Keep::UntilRevoked => UNTIL_REVOKED_SECS,
-        };
-        now.checked_sub(self.granted_at)
-            .is_some_and(|age| age <= limit)
+        counts(self.keep, self.granted_at, now)
+    }
+}
+
+/// What a token for remote control stands for: the input kinds the person allowed an app to take
+/// over. It is remembered like a [`Grant`], by the same rules, in the same book.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputGrant {
+    /// The app the token was given to; another app's token is refused.
+    pub app_id: String,
+    /// The kinds it was given.
+    pub devices: DeviceKinds,
+    /// How long the app asked for it to be remembered.
+    pub keep: Keep,
+    /// When it was given, in seconds since the Unix epoch.
+    pub granted_at: u64,
+}
+
+impl InputGrant {
+    /// The grant to remember for `app_id`, or `None` when none may be kept: the app has no
+    /// identity, or was given no device.
+    pub fn issue(app_id: &str, devices: DeviceKinds, keep: Keep, now: u64) -> Option<Self> {
+        (!app_id.is_empty() && !devices.is_empty()).then(|| Self {
+            app_id: app_id.to_owned(),
+            devices,
+            keep,
+            granted_at: now,
+        })
+    }
+
+    /// Whether the grant still counts at `now`.
+    pub fn valid_at(&self, now: u64) -> bool {
+        counts(self.keep, self.granted_at, now)
     }
 }
 
@@ -172,6 +209,7 @@ pub struct Remembered {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RestoreBook {
     grants: BTreeMap<RestoreToken, Grant>,
+    inputs: BTreeMap<RestoreToken, InputGrant>,
 }
 
 impl RestoreBook {
@@ -185,8 +223,16 @@ impl RestoreBook {
         self.grants.insert(token, grant);
     }
 
-    /// Forget a token (the person took the access back, or the app asked for a fresh one).
+    /// Remember a remote-control grant under a token, replacing any earlier one under the same
+    /// token.
+    pub fn remember_input(&mut self, token: RestoreToken, grant: InputGrant) {
+        self.inputs.insert(token, grant);
+    }
+
+    /// Forget a token of either kind (the person took the access back, or the app asked for a
+    /// fresh one).
     pub fn forget(&mut self, token: &RestoreToken) -> Option<Grant> {
+        self.inputs.remove(token);
         self.grants.remove(token)
     }
 
@@ -215,63 +261,111 @@ impl RestoreBook {
         }
     }
 
+    /// What `token` restores for `app_id` at time `now` when it asks for the kinds `wanted`: all
+    /// the kinds the grant was given, or none.
+    ///
+    /// All or nothing, as for [`RestoreBook::resolve`]; and a token that was given fewer kinds
+    /// than are wanted restores nothing, so an app cannot grow what it was allowed. An app that
+    /// asks for fewer gets what it asks for, and the grant it is remembered by keeps all its kinds.
+    pub fn resolve_input(
+        &self,
+        token: &RestoreToken,
+        app_id: &str,
+        wanted: DeviceKinds,
+        now: u64,
+    ) -> DeviceKinds {
+        match self.inputs.get(token) {
+            Some(grant)
+                if !app_id.is_empty()
+                    && grant.app_id == app_id
+                    && grant.valid_at(now)
+                    && grant.devices.covers(wanted) =>
+            {
+                grant.devices
+            }
+            _ => DeviceKinds::NONE,
+        }
+    }
+
     /// Forget the grants that no longer count at `now`, and the oldest ones past [`MAX_GRANTS`].
     /// How many were forgotten.
     pub fn prune(&mut self, now: u64) -> usize {
-        let before = self.grants.len();
+        let before = self.len();
         self.grants.retain(|_, grant| grant.valid_at(now));
-        if self.grants.len() > MAX_GRANTS {
+        self.inputs.retain(|_, grant| grant.valid_at(now));
+        let surplus = self.len().saturating_sub(MAX_GRANTS);
+        if surplus > 0 {
             let mut by_age: Vec<(u64, RestoreToken)> = self
                 .grants
                 .iter()
                 .map(|(token, grant)| (grant.granted_at, token.clone()))
+                .chain(
+                    self.inputs
+                        .iter()
+                        .map(|(token, grant)| (grant.granted_at, token.clone())),
+                )
                 .collect();
             by_age.sort();
-            let surplus = self.grants.len() - MAX_GRANTS;
             for (_, token) in by_age.into_iter().take(surplus) {
                 self.grants.remove(&token);
+                self.inputs.remove(&token);
             }
         }
-        before - self.grants.len()
+        before - self.len()
     }
 
-    /// The apps with a grant that still counts at `now`, one entry each, by app id: what a list
-    /// the person can edit shows. Tokens are not part of it.
+    /// The apps with a grant, of either kind, that still counts at `now`, one entry each, by app
+    /// id: what a list the person can edit shows. Tokens are not part of it.
     pub fn remembered(&self, now: u64) -> Vec<Remembered> {
+        let screens = self
+            .grants
+            .values()
+            .filter(|g| g.valid_at(now))
+            .map(|g| (g.app_id.as_str(), g.granted_at, g.keep));
+        let inputs = self
+            .inputs
+            .values()
+            .filter(|g| g.valid_at(now))
+            .map(|g| (g.app_id.as_str(), g.granted_at, g.keep));
         let mut by_app: BTreeMap<&str, Remembered> = BTreeMap::new();
-        for grant in self.grants.values().filter(|g| g.valid_at(now)) {
-            let entry = by_app
-                .entry(grant.app_id.as_str())
-                .or_insert_with(|| Remembered {
-                    app_id: grant.app_id.clone(),
-                    granted_at: grant.granted_at,
-                    keep: grant.keep,
-                });
-            entry.granted_at = entry.granted_at.max(grant.granted_at);
-            entry.keep = entry.keep.max(grant.keep);
+        for (app_id, granted_at, keep) in screens.chain(inputs) {
+            let entry = by_app.entry(app_id).or_insert_with(|| Remembered {
+                app_id: app_id.to_owned(),
+                granted_at,
+                keep,
+            });
+            entry.granted_at = entry.granted_at.max(granted_at);
+            entry.keep = entry.keep.max(keep);
         }
         by_app.into_values().collect()
     }
 
-    /// Forget every grant of `app_id` (the person took the access back). How many were forgotten.
+    /// Forget every grant of `app_id`, of either kind (the person took the access back). How many
+    /// were forgotten.
     pub fn forget_app(&mut self, app_id: &str) -> usize {
-        let before = self.grants.len();
+        let before = self.len();
         self.grants.retain(|_, grant| grant.app_id != app_id);
-        before - self.grants.len()
+        self.inputs.retain(|_, grant| grant.app_id != app_id);
+        before - self.len()
     }
 
-    /// Every remembered grant, in token order (for a store to write).
+    /// Every remembered screen grant, in token order (for a store to write).
     pub fn iter(&self) -> impl Iterator<Item = (&RestoreToken, &Grant)> {
         self.grants.iter()
     }
 
-    /// How many grants are remembered.
+    /// Every remembered remote-control grant, in token order (for a store to write).
+    pub fn inputs(&self) -> impl Iterator<Item = (&RestoreToken, &InputGrant)> {
+        self.inputs.iter()
+    }
+
+    /// How many grants of either kind are remembered.
     pub fn len(&self) -> usize {
-        self.grants.len()
+        self.grants.len() + self.inputs.len()
     }
 
     /// Whether the book is empty.
     pub fn is_empty(&self) -> bool {
-        self.grants.is_empty()
+        self.grants.is_empty() && self.inputs.is_empty()
     }
 }

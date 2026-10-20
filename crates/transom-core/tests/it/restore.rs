@@ -1,8 +1,8 @@
 use proptest::prelude::*;
-use transom_core::restore::Grant;
+use transom_core::restore::{Grant, InputGrant};
 use transom_core::{
-    CastSource, CursorMode, Keep, MAX_GRANTS, PersistMode, Remembered, RestoreBook, RestoreToken,
-    UNTIL_REVOKED_SECS, WHILE_RUNNING_SECS,
+    CastSource, CursorMode, DeviceKinds, Keep, MAX_GRANTS, PersistMode, Remembered, RestoreBook,
+    RestoreToken, UNTIL_REVOKED_SECS, WHILE_RUNNING_SECS,
 };
 
 const NOW: u64 = 1_800_000_000;
@@ -208,4 +208,109 @@ fn what_is_remembered_is_listed_by_app_and_can_be_taken_back() {
         vec![out("A"), out("B")],
         "the other app keeps its grant"
     );
+}
+
+/// Remote control is remembered in the same book by the same rules: for an app with an identity,
+/// for a time, listed and taken back with the screen grants, and restored only for the same
+/// devices or fewer.
+#[test]
+fn a_remote_control_grant_is_remembered_like_a_shared_screen() {
+    let keys = DeviceKinds::from_wire(1);
+    let keys_and_pointer = DeviceKinds::from_wire(3);
+    assert!(InputGrant::issue("", keys, Keep::UntilRevoked, NOW).is_none());
+    assert!(
+        InputGrant::issue(
+            "org.example.Remote",
+            DeviceKinds::NONE,
+            Keep::UntilRevoked,
+            NOW
+        )
+        .is_none()
+    );
+
+    let token = RestoreToken::mint([7; 16]);
+    let mut book = RestoreBook::new();
+    let input = InputGrant::issue(
+        "org.example.Remote",
+        keys_and_pointer,
+        Keep::UntilRevoked,
+        NOW,
+    )
+    .expect("a grant");
+    book.remember_input(token.clone(), input);
+    book.remember(
+        RestoreToken::mint([8; 16]),
+        grant("org.example.Remote", Keep::WhileRunning, NOW - 5),
+    );
+    assert_eq!(book.len(), 2);
+
+    let table: [(&str, &str, DeviceKinds, u64, DeviceKinds); 6] = [
+        (
+            "the same devices",
+            "org.example.Remote",
+            keys_and_pointer,
+            NOW,
+            keys_and_pointer,
+        ),
+        (
+            "fewer devices",
+            "org.example.Remote",
+            keys,
+            NOW,
+            keys_and_pointer,
+        ),
+        (
+            "more devices",
+            "org.example.Remote",
+            DeviceKinds::ALL,
+            NOW,
+            DeviceKinds::NONE,
+        ),
+        (
+            "another app",
+            "org.example.Other",
+            keys,
+            NOW,
+            DeviceKinds::NONE,
+        ),
+        ("no identity", "", keys, NOW, DeviceKinds::NONE),
+        (
+            "run out",
+            "org.example.Remote",
+            keys,
+            NOW + UNTIL_REVOKED_SECS + 1,
+            DeviceKinds::NONE,
+        ),
+    ];
+    // What comes back is everything the grant covers, so a smaller ask does not shrink it.
+    for (name, app, wanted, at, want) in table {
+        assert_eq!(book.resolve_input(&token, app, wanted, at), want, "{name}");
+    }
+    let screen = RestoreToken::mint([8; 16]);
+    assert_eq!(
+        book.resolve_input(&screen, "org.example.Remote", keys, NOW),
+        DeviceKinds::NONE,
+        "a screen token is not a token for input"
+    );
+    assert!(
+        book.resolve(&token, "org.example.Remote", &[out("A")], NOW)
+            .is_empty(),
+        "and an input token is not a token for a screen"
+    );
+
+    assert_eq!(
+        book.remembered(NOW),
+        vec![Remembered {
+            app_id: "org.example.Remote".to_owned(),
+            granted_at: NOW,
+            keep: Keep::UntilRevoked,
+        }],
+        "one line for the app, whatever it was allowed"
+    );
+    assert_eq!(
+        book.forget_app("org.example.Remote"),
+        2,
+        "one revoke takes back both"
+    );
+    assert!(book.is_empty());
 }

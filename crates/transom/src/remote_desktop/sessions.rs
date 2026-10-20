@@ -6,7 +6,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use super::book::{Book, Entry, Socket, Stage};
-use super::devices::DeviceKinds;
+use transom_core::{DeviceKinds, PersistMode, RestoreToken};
+
 use super::eis::{EisError, EisHandout};
 use crate::peers::{Creator, Tether};
 use crate::table::{Refusal, SessionKey};
@@ -29,12 +30,22 @@ pub enum ConnectError {
     Eis(#[from] EisError),
 }
 
+/// What an app chose in `SelectDevices`.
+#[derive(Debug)]
+pub(super) struct Wanted {
+    pub kinds: DeviceKinds,
+    pub persist: PersistMode,
+    pub restore: Option<RestoreToken>,
+}
+
 /// What the person is about to be asked about.
 #[derive(Debug)]
 pub(super) struct Asking {
     pub id: u64,
     pub app_id: String,
     pub kinds: DeviceKinds,
+    pub persist: PersistMode,
+    pub restore: Option<RestoreToken>,
 }
 
 /// What came of asking.
@@ -111,11 +122,13 @@ impl Core {
         keys
     }
 
-    /// Records the kinds the app wants. Only before `Start`.
-    pub fn select(&self, key: &SessionKey, kinds: DeviceKinds) -> Settled {
+    /// Records what the app wants. Only before `Start`.
+    pub fn select(&self, key: &SessionKey, wanted: Wanted) -> Settled {
         match self.lock().table.entries.get_mut(key) {
             Some(entry) if entry.stage == Stage::Created => {
-                entry.kinds = kinds;
+                entry.kinds = wanted.kinds;
+                entry.persist = wanted.persist;
+                entry.restore = wanted.restore;
                 Settled::Applied
             }
             _ => Settled::Gone,
@@ -135,6 +148,8 @@ impl Core {
             id: entry.id,
             app_id: entry.app_id.clone(),
             kinds: entry.kinds,
+            persist: entry.persist,
+            restore: entry.restore.clone(),
         })
     }
 

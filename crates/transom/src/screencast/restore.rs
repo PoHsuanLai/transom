@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use transom_core::{Grant, Keep, RestoreBook, RestoreToken};
+use transom_core::{DeviceKinds, Grant, InputGrant, Keep, RestoreBook, RestoreToken};
 
 use crate::chooser::source_from_wire;
 use crate::fsread::read_text;
@@ -168,7 +168,8 @@ const HEADER: &str = "transom-restore 2";
 const OLDER_HEADER: &str = "transom-restore 1";
 
 /// One grant per line: the token, the app, the persist mode (1 or 2), when it was given (seconds
-/// since the epoch), then each source as `kind:name`, tab separated. The fields escape backslash,
+/// since the epoch), then each source as `kind:name`, tab separated. A grant of remote control has
+/// instead the one field `input:<kinds>`, the portal's device bit set. The fields escape backslash,
 /// tab, newline and carriage return, so a window identifier can hold anything.
 fn encode(book: &RestoreBook) -> String {
     let mut text = String::from(HEADER);
@@ -188,6 +189,18 @@ fn encode(book: &RestoreBook) -> String {
             text.push(':');
             text.push_str(&escape(name));
         }
+        text.push('\n');
+    }
+    for (token, grant) in book.inputs() {
+        text.push_str(token.expose());
+        text.push('\t');
+        text.push_str(&escape(&grant.app_id));
+        text.push('\t');
+        text.push_str(&grant.keep.to_wire().to_string());
+        text.push('\t');
+        text.push_str(&grant.granted_at.to_string());
+        text.push_str("\tinput:");
+        text.push_str(&grant.devices.to_wire().to_string());
         text.push('\n');
     }
     text
@@ -214,26 +227,51 @@ fn decode(text: &str) -> Decoded {
     let mut skipped = 0;
     for line in lines.filter(|l| !l.is_empty()) {
         match decode_line(line) {
-            Some((token, grant)) => book.remember(token, grant),
+            Some(Line::Screen(token, grant)) => book.remember(token, grant),
+            Some(Line::Input(token, grant)) => book.remember_input(token, grant),
             None => skipped += 1,
         }
     }
     Decoded::Book { book, skipped }
 }
 
-fn decode_line(line: &str) -> Option<(RestoreToken, Grant)> {
+/// One line of the file, read.
+enum Line {
+    /// A grant of shared sources.
+    Screen(RestoreToken, Grant),
+    /// A grant of remote control.
+    Input(RestoreToken, InputGrant),
+}
+
+fn decode_line(line: &str) -> Option<Line> {
     let mut fields = line.split('\t');
     let token = RestoreToken::parse(fields.next()?)?;
     let app_id = unescape(fields.next()?)?;
     let keep = fields.next()?.parse().ok().and_then(Keep::from_wire)?;
     let granted_at = fields.next()?.parse().ok()?;
-    let sources = fields
+    let rest: Vec<&str> = fields.collect();
+    if let [only] = rest.as_slice()
+        && let Some(bits) = only.strip_prefix("input:")
+    {
+        let devices = DeviceKinds::from_wire(bits.parse().ok()?);
+        return (!devices.is_empty()).then_some(Line::Input(
+            token,
+            InputGrant {
+                app_id,
+                devices,
+                keep,
+                granted_at,
+            },
+        ));
+    }
+    let sources = rest
+        .into_iter()
         .map(|field| {
             let (kind, name) = field.split_once(':')?;
             source_from_wire(kind, &unescape(name)?)
         })
         .collect::<Option<Vec<_>>>()?;
-    Some((
+    Some(Line::Screen(
         token,
         Grant {
             app_id,

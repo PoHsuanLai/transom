@@ -8,19 +8,19 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use transom_core::{
-    CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, Grant, Keep, PersistMode,
-    PwNode, Remembered, RestoreBook, RestoreToken,
+    CastIn, CastOut, CastReply, CastSource, Choice, ChoiceRequest, PersistMode, PwNode, Remembered,
 };
 use zbus::Connection;
 
 use super::options;
-use super::restore::{RestoreStore, StoreError};
+use super::restore::RestoreStore;
 use super::run::Share;
 use super::session::{Refusal, Selection, SessionBook, SessionKey};
 use super::{Dict, SessionObject};
-use crate::app_proof::{AppProof, AppProver, NoProof};
+use crate::app_proof::{AppProver, NoProof, Who};
 use crate::capture::{DisplayName, Job};
 use crate::chooser::{Chooser, unavailable_is_cancel};
+use crate::keeper::{Keeper, Kept, unix_now};
 use crate::names::AppNames;
 use crate::peers::{Creator, Tether};
 use crate::response::Response;
@@ -31,11 +31,10 @@ pub(super) struct Shared {
     sessions: Mutex<SessionBook>,
     shares: Mutex<BTreeMap<SessionKey, Share>>,
     chooser: Box<dyn Chooser>,
-    restore: Box<dyn RestoreStore>,
+    /// The book of what is remembered, shared with the remote-control interface.
+    pub keeper: Arc<Keeper>,
     /// Says which apps are what their ids say; only those are remembered.
-    pub prover: Box<dyn AppProver>,
-    /// Held while the token book is read, changed and written, so two Starts do not lose a token.
-    book_lock: Mutex<()>,
+    pub prover: Arc<dyn AppProver>,
     /// Where the pictures come from.
     pub display: DisplayName,
     /// Where apps' own names are found.
@@ -65,9 +64,8 @@ impl Shared {
             sessions: Mutex::new(SessionBook::new()),
             shares: Mutex::new(BTreeMap::new()),
             chooser,
-            restore,
-            prover: Box::new(NoProof),
-            book_lock: Mutex::new(()),
+            keeper: Arc::new(Keeper::new(restore)),
+            prover: Arc::new(NoProof),
             display: DisplayName::session(),
             names: AppNames::none(),
         }
@@ -152,9 +150,10 @@ impl Shared {
         // One job for the whole start: what the restore token is checked against and every stream
         // opened afterwards use one connection to the compositor, asked for once.
         let job = Arc::new(Job::new(&self.display));
-        let restored = self.restored(&selection, key, app_id, &job).await;
+        let who = Who::identify(self.prover.as_ref(), &key.0, app_id).await;
+        let restored = self.restored(&selection, &who, &job).await;
         let outcome = self
-            .run_machine(key, app_id, &selection, restored, &job, connection)
+            .run_machine(key, &who, &selection, restored, &job, connection)
             .await;
         if !matches!(outcome, Response::Granted(_)) {
             held(&self.shares).remove(key);
@@ -166,7 +165,7 @@ impl Shared {
     async fn run_machine(
         self: &Arc<Self>,
         key: &SessionKey,
-        app_id: &str,
+        who: &Who,
         selection: &Selection,
         restored: Vec<CastSource>,
         job: &Arc<Job>,
@@ -184,7 +183,7 @@ impl Shared {
             let outs = held(&self.sessions).apply(key, input);
             for out in outs {
                 match out {
-                    CastOut::AskChooser => match self.ask(selection, app_id).await {
+                    CastOut::AskChooser => match self.ask(selection, who).await {
                         Asked::Picked(choice) => {
                             cursor = choice.cursor;
                             inputs.push_back(CastIn::Picked(choice.sources));
@@ -205,7 +204,7 @@ impl Shared {
                         held(&self.shares).remove(key);
                     }
                     CastOut::Reply(reply) => {
-                        outcome = self.outcome(key, app_id, selection, reply).await;
+                        outcome = self.outcome(key, who, selection, reply).await;
                     }
                     // A later core adds outputs this does not know; they are ignored.
                     _ => {}
@@ -217,10 +216,10 @@ impl Shared {
 
     /// Ask the person; `Failed` when the question failed or the answer was not acceptable. With no
     /// shell to ask the answer is a cancel, never a share.
-    async fn ask(&self, selection: &Selection, app_id: &str) -> Asked {
+    async fn ask(&self, selection: &Selection, who: &Who) -> Asked {
         let request = ChoiceRequest {
             offer: selection.offer.clone(),
-            app_label: self.names.label(app_id),
+            app_label: self.names.label(&who.shown),
         };
         match unavailable_is_cancel(self.chooser.pick(&request).await) {
             Ok(Some(choice)) => match request.accept(choice.sources, choice.cursor) {
@@ -280,7 +279,7 @@ impl Shared {
     async fn outcome(
         self: &Arc<Self>,
         key: &SessionKey,
-        app_id: &str,
+        who: &Who,
         selection: &Selection,
         reply: CastReply,
     ) -> Response {
@@ -289,11 +288,16 @@ impl Shared {
                 let Some(streams) = held(&self.shares).get(key).map(Share::infos) else {
                     return Response::Failed;
                 };
-                let kept = match selection.persist {
-                    PersistMode::DoNot => None,
-                    PersistMode::Keep(_) if !self.remembers(key, app_id).await => None,
-                    PersistMode::Keep(keep) => self
-                        .keep(app_id, sources, keep, selection.restore.clone())
+                // Only an app shown to be what it says is remembered, by the id it is shown by.
+                let kept = match (selection.persist, who.proven.as_deref()) {
+                    (PersistMode::Keep(keep), Some(app_id)) => self
+                        .keeper
+                        .keep(
+                            app_id,
+                            Kept::Screen(sources),
+                            keep,
+                            selection.restore.clone(),
+                        )
                         .await
                         .map(|token| (keep, token)),
                     _ => None,
@@ -312,45 +316,24 @@ impl Shared {
         }
     }
 
-    /// Whether `app_id`, calling through `key`, is shown to be what its id says. Only such an app
-    /// is remembered or restored; any other is asked every time (NEW-PI-2).
-    async fn remembers(&self, key: &SessionKey, app_id: &str) -> bool {
-        match self.prover.prove(&key.0, app_id).await {
-            AppProof::Proven => true,
-            AppProof::Unproven(why) => {
-                tracing::info!(%why, "this app is asked every time: it is not shown to be what its id says");
-                false
-            }
-        }
-    }
-
     /// What a restore token stands for now: the sources it was given, if all still exist and the
-    /// grant has not expired. An app with no identity is never restored.
-    async fn restored(
-        self: &Arc<Self>,
-        selection: &Selection,
-        key: &SessionKey,
-        app_id: &str,
-        job: &Arc<Job>,
-    ) -> Vec<CastSource> {
-        let Some(token) = selection.restore.clone() else {
+    /// grant has not expired. An app that is not shown to be what it says is never restored.
+    async fn restored(&self, selection: &Selection, who: &Who, job: &Arc<Job>) -> Vec<CastSource> {
+        let (Some(token), Some(app_id)) = (selection.restore.as_ref(), who.proven.as_deref())
+        else {
             return Vec::new();
         };
-        if app_id.is_empty() || !self.remembers(key, app_id).await {
-            return Vec::new();
-        }
         let job = Arc::clone(job);
         let live = tokio::task::spawn_blocking(move || job.live_sources())
             .await
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
-        let sources = tokio::task::spawn_blocking(move || {
-            this.read_book().resolve(&token, &app_id, &live, unix_now())
-        })
-        .await
-        .unwrap_or_default();
+        let sources = self
+            .keeper
+            .book()
+            .await
+            .resolve(token, app_id, &live, unix_now());
         if sources.iter().all(|s| selection.offer.kinds.offers(s)) {
             sources
         } else {
@@ -358,117 +341,15 @@ impl Shared {
         }
     }
 
-    /// Remember the grant under a fresh token (and forget the one it replaces), off the async
-    /// runtime because the book is a file. `None` when nothing may be kept (the app has no
-    /// identity), or no token could be made or kept; the person is then asked again next time.
-    async fn keep(
-        self: &Arc<Self>,
-        app_id: &str,
-        sources: Vec<CastSource>,
-        keep: Keep,
-        replaces: Option<RestoreToken>,
-    ) -> Option<RestoreToken> {
-        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
-        tokio::task::spawn_blocking(move || {
-            this.keep_now(&app_id, sources, keep, replaces.as_ref())
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
-    fn keep_now(
-        &self,
-        app_id: &str,
-        sources: Vec<CastSource>,
-        keep: Keep,
-        replaces: Option<&RestoreToken>,
-    ) -> Option<RestoreToken> {
-        let now = unix_now();
-        let Some(grant) = Grant::issue(app_id, sources, keep, now) else {
-            tracing::info!(
-                "this share is not remembered: the app has no identity to remember it by"
-            );
-            return None;
-        };
-        let token = RestoreToken::mint(crate::random::bytes::<16>()?);
-        let _book = held(&self.book_lock);
-        let mut book = match self.restore.load() {
-            Ok(book) => book,
-            // The damaged file was set aside by the store, so nothing is lost by starting anew.
-            Err(StoreError::Damaged) => {
-                tracing::error!("the saved grants were damaged and were set aside; starting anew");
-                RestoreBook::new()
-            }
-            // Contents unknown: saving now could erase everyone else's grants.
-            Err(error) => {
-                tracing::error!(%error, "the saved grants could not be read, so this one is not saved");
-                return None;
-            }
-        };
-        if let Some(old) = replaces {
-            book.forget(old);
-        }
-        book.remember(token.clone(), grant);
-        book.prune(now);
-        match self.restore.save(&book) {
-            Ok(()) => Some(token),
-            Err(error) => {
-                tracing::warn!(%error, "the restore tokens could not be saved");
-                None
-            }
-        }
-    }
-
     /// The apps the person has let share without asking again, off the async runtime.
     pub async fn remembered(self: &Arc<Self>) -> Vec<Remembered> {
-        let this = Arc::clone(self);
-        tokio::task::spawn_blocking(move || this.read_book().remembered(unix_now()))
-            .await
-            .unwrap_or_default()
+        self.keeper.remembered().await
     }
 
     /// Take back everything remembered for `app_id`; how many grants went, or `None` when the
     /// saved book could not be read or written (nothing is then changed).
     pub async fn revoke(self: &Arc<Self>, app_id: &str) -> Option<usize> {
-        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
-        tokio::task::spawn_blocking(move || this.revoke_now(&app_id))
-            .await
-            .ok()
-            .flatten()
-    }
-
-    fn revoke_now(&self, app_id: &str) -> Option<usize> {
-        let _book = held(&self.book_lock);
-        let mut book = match self.restore.load() {
-            Ok(book) => book,
-            // Nothing readable is nothing remembered; the store set a damaged file aside.
-            Err(StoreError::Damaged) => return Some(0),
-            Err(error) => {
-                tracing::error!(%error, "the saved grants could not be read, so none was taken back");
-                return None;
-            }
-        };
-        let gone = book.forget_app(app_id);
-        if gone == 0 {
-            return Some(0);
-        }
-        match self.restore.save(&book) {
-            Ok(()) => Some(gone),
-            Err(error) => {
-                tracing::error!(%error, "the saved grants could not be written, so none was taken back");
-                None
-            }
-        }
-    }
-
-    /// The saved tokens; an empty book if they cannot be read.
-    fn read_book(&self) -> RestoreBook {
-        let _book = held(&self.book_lock);
-        self.restore.load().unwrap_or_else(|error| {
-            tracing::warn!(%error, "the restore tokens could not be read");
-            RestoreBook::new()
-        })
+        self.keeper.revoke(app_id).await
     }
 }
 
@@ -478,11 +359,4 @@ pub(super) async fn forget_object(connection: &Connection, key: &SessionKey) {
         .object_server()
         .remove::<SessionObject, _>(key.0.as_str())
         .await;
-}
-
-/// Seconds since the Unix epoch, the clock grants are dated by.
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

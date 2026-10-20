@@ -5,6 +5,7 @@
 //! not read as "System settings". Whatever is shown is stripped of control and direction
 //! characters and cut to [`MAX_LABEL_CHARS`], because the id and the entry are the app's to write.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,6 +17,13 @@ pub const MAX_LABEL_CHARS: usize = 64;
 
 /// The largest desktop entry that is read. Real ones are a few kilobytes.
 const MAX_ENTRY_BYTES: u64 = 64 * 1024;
+
+/// The most desktop entries one search by program looks at. Real machines have a few hundred; a
+/// folder with more is not one to trust a search of.
+const MAX_SCAN_ENTRIES: usize = 4096;
+
+/// The most bytes of desktop entries one search by program reads in all.
+const MAX_SCAN_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The longest id that is looked up (a file name cannot be longer).
 const MAX_ID_BYTES: usize = 255;
@@ -86,6 +94,51 @@ impl AppNames {
         }
     }
 
+    /// The ids of the desktop entries, written by root, whose `Exec` program `runs` accepts: the
+    /// way to tell which app a program is when it did not say.
+    ///
+    /// An id counts once, from the first data directory that has it (as for [`AppNames::registered`]).
+    /// The search reads at most [`MAX_SCAN_ENTRIES`] entries and [`MAX_SCAN_BYTES`] bytes and then
+    /// gives up, so a crowded or hostile folder cannot make it slow or wrong.
+    pub fn running(&self, root: &dyn RootHeld, runs: impl Fn(&str) -> bool) -> Found {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut found: BTreeSet<String> = BTreeSet::new();
+        let mut bytes = 0_u64;
+        for dir in self.dirs.iter() {
+            let Ok(listing) = std::fs::read_dir(dir.join("applications")) else {
+                continue;
+            };
+            for item in listing.flatten() {
+                let file = item.file_name();
+                let Some(id) = file
+                    .to_str()
+                    .and_then(|name| name.strip_suffix(".desktop"))
+                    .filter(|id| plain_id(id) && !seen.contains(*id))
+                else {
+                    continue;
+                };
+                if seen.len() >= MAX_SCAN_ENTRIES || bytes > MAX_SCAN_BYTES {
+                    return Found::TooMany;
+                }
+                let path = item.path();
+                let Ok(text) = read_text(&path, MAX_ENTRY_BYTES) else {
+                    continue;
+                };
+                seen.insert(id.to_owned());
+                bytes = bytes.saturating_add(u64::try_from(text.len()).unwrap_or(u64::MAX));
+                if root.holds(&path) && exec_program(&text).is_some_and(|program| runs(&program)) {
+                    found.insert(id.to_owned());
+                }
+            }
+        }
+        let mut ids = found.into_iter();
+        match (ids.next(), ids.next()) {
+            (None, _) => Found::Nobody,
+            (Some(id), None) => Found::One(id),
+            (Some(_), Some(_)) => Found::Several,
+        }
+    }
+
     fn entry_name(&self, id: &str) -> Option<String> {
         if !plain_id(id) {
             return None;
@@ -107,6 +160,19 @@ pub enum Registered {
     NotRootHeld,
     /// No entry, or none that names a program.
     Nothing,
+}
+
+/// Which desktop entries a search by program found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    /// No entry of root's runs the program.
+    Nobody,
+    /// Exactly one id does.
+    One(String),
+    /// More than one id does, so the program cannot say which app it is.
+    Several,
+    /// There were too many entries to search.
+    TooMany,
 }
 
 /// The program the `Exec` line of a desktop entry's `[Desktop Entry]` group starts: its first word,

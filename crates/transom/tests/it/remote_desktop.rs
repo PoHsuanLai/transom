@@ -2,14 +2,23 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
+use peephole_bus::peephole_core::Standing;
 use transom::BoxFuture;
 use transom::access::{Answer, Asker, FakeAsker, Question};
+use transom::app_proof::{AppProof, AppProver, TrustAll, judge_app};
 use transom::chooser::ShellError;
+use transom::keeper::{Keeper, unix_now};
+use transom::names::AppNames;
 use transom::peers::Tether;
 use transom::remote_desktop::{ConnectError, DeviceKinds, FakeEis, RemoteDesktopService};
 use transom::screencast::Dict;
+use transom::screencast::options::{restore_data, restore_token};
+use transom::screencast::restore::MemoryStore;
 use transom::screencast::session::SessionKey;
+use transom_core::{Keep, RestoreToken};
 use zbus::zvariant::{OwnedValue, Value};
+
+use crate::app_proof::{REMOTE, REMOTE_ID, REMOTE_PROGRAM, names_with_entries, program};
 
 fn key(n: u32) -> SessionKey {
     SessionKey(format!("/org/freedesktop/portal/desktop/session/x/{n}"))
@@ -358,5 +367,144 @@ async fn a_restarted_portal_counts_above_the_last_run_and_drops_its_leftovers() 
     assert!(
         numbers[0] > 1_000_000 && numbers[1] > numbers[0],
         "the second run starts above the first: {numbers:?}"
+    );
+}
+
+/// Tells apps apart by the program the standing names, the way the real prover does.
+#[derive(Debug)]
+struct Told {
+    standing: Standing,
+    names: AppNames,
+}
+
+impl AppProver for Told {
+    fn prove<'a>(&'a self, _session: &'a str, app_id: &'a str) -> BoxFuture<'a, AppProof> {
+        Box::pin(async move { judge_app(&self.standing, app_id, &self.names, &TrustAll) })
+    }
+}
+
+/// A service that remembers in `keeper`, whose caller runs `program_path` and whose only desktop
+/// entry is the fake remote app's.
+fn remembering(
+    program_path: &str,
+    answers: Vec<Answer>,
+    keeper: &Arc<Keeper>,
+) -> (RemoteDesktopService, Arc<FakeAsker>, tempfile::TempDir) {
+    let (dir, names) = names_with_entries(&[(REMOTE_ID, REMOTE)]);
+    let asker = Arc::new(FakeAsker::new(answers));
+    let told = Told {
+        standing: program(program_path),
+        names: names.clone(),
+    };
+    let service =
+        RemoteDesktopService::new(Box::new(asker.clone()), Box::new(Arc::new(FakeEis::new())))
+            .with_names(names)
+            .with_memory(Arc::clone(keeper), Arc::new(told));
+    (service, asker, dir)
+}
+
+fn new_keeper() -> Arc<Keeper> {
+    Arc::new(Keeper::new(Box::new(MemoryStore::default())))
+}
+
+/// The options of a `SelectDevices` that asks for `bits` and to be remembered until taken back,
+/// offering `token` if there is one.
+fn remember(bits: u32, token: Option<&RestoreToken>) -> Dict {
+    let mut options = types(bits);
+    options.insert("persist_mode".to_owned(), OwnedValue::from(2_u32));
+    if let Some(token) = token {
+        options.insert(
+            "restore_data".to_owned(),
+            restore_data(token).expect("restore data"),
+        );
+    }
+    options
+}
+
+/// Opens a session for an app that gives no id, selects, and begins.
+async fn begin_with(service: &RemoteDesktopService, n: u32, options: &Dict) -> (u32, Dict) {
+    service.create(key(n), "");
+    service.select(&key(n), options);
+    service.begin(&key(n)).await
+}
+
+#[tokio::test]
+async fn a_yes_to_remote_control_is_remembered_and_restored_for_the_same_devices_or_fewer() {
+    let keeper = new_keeper();
+    let answers = vec![Answer::Granted; 3];
+    let (service, asker, _dir) = remembering(REMOTE_PROGRAM, answers, &keeper);
+
+    // Asked once. The app gave no id; it is shown by its entry's name, remembered by its id.
+    let (response, results) = begin_with(&service, 1, &remember(3, None)).await;
+    assert_eq!(response, 0);
+    assert_eq!(asker.asked().len(), 1);
+    assert_eq!(asker.asked()[0].app_label, "Fake Remote");
+    let kept = results
+        .get("persist_mode")
+        .and_then(|v| v.downcast_ref::<u32>().ok());
+    assert_eq!(kept, Some(2), "until taken back");
+    let first = restore_token(&results).expect("a token for next time");
+    let listed = keeper.remembered().await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].app_id.as_str(), listed[0].keep),
+        (REMOTE_ID, Keep::UntilRevoked)
+    );
+
+    // Fewer devices: not asked, the token is replaced, and the yes still covers both devices.
+    let (response, results) = begin_with(&service, 2, &remember(1, Some(&first))).await;
+    assert_eq!((response, devices_of(&results)), (0, Some(1)));
+    assert_eq!(asker.asked().len(), 1, "not asked again");
+    let second = restore_token(&results).expect("a fresh token");
+    assert_ne!(second, first);
+    let gone =
+        keeper
+            .book()
+            .await
+            .resolve_input(&first, REMOTE_ID, DeviceKinds::from_wire(1), unix_now());
+    assert!(gone.is_empty(), "the token it replaced is forgotten");
+    let (response, results) = begin_with(&service, 3, &remember(3, Some(&second))).await;
+    assert_eq!((response, devices_of(&results)), (0, Some(3)));
+    assert_eq!(
+        asker.asked().len(),
+        1,
+        "asking for fewer did not shrink the yes"
+    );
+    let third = restore_token(&results).expect("a fresh token");
+
+    // More devices than were allowed: asked.
+    let (response, results) = begin_with(&service, 4, &remember(7, Some(&third))).await;
+    assert_eq!((response, devices_of(&results)), (0, Some(7)));
+    assert_eq!(asker.asked().len(), 2);
+    let fourth = restore_token(&results).expect("a fresh token");
+
+    // Taken back in one go, whatever it covered: asked again.
+    assert_eq!(keeper.revoke(REMOTE_ID).await, Some(1));
+    begin_with(&service, 5, &remember(7, Some(&fourth))).await;
+    assert_eq!(asker.asked().len(), 3);
+}
+
+#[tokio::test]
+async fn an_app_that_is_not_shown_to_be_what_it_says_is_asked_every_time() {
+    let keeper = new_keeper();
+    let (proven, _, _entries) = remembering(REMOTE_PROGRAM, vec![Answer::Granted], &keeper);
+    let (_, results) = begin_with(&proven, 1, &remember(3, None)).await;
+    let token = restore_token(&results).expect("a token");
+
+    // Another program says the remote app's id and offers its token.
+    let (stranger, asker, _other) = remembering("/usr/bin/python3", vec![Answer::Granted], &keeper);
+    stranger.create(key(2), REMOTE_ID);
+    stranger.select(&key(2), &remember(3, Some(&token)));
+    let (response, results) = stranger.begin(&key(2)).await;
+    assert_eq!(response, 0);
+    assert_eq!(asker.asked().len(), 1, "the token is no use to it");
+    assert!(
+        !results.contains_key("restore_data") && !results.contains_key("persist_mode"),
+        "and nothing is remembered for it"
+    );
+    assert_eq!(
+        keeper.remembered().await.len(),
+        1,
+        "only the proven app is listed"
     );
 }

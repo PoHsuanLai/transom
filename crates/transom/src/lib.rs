@@ -30,6 +30,7 @@ pub mod dev_rows;
 pub mod error;
 pub(crate) mod fsread;
 pub mod inhibit;
+pub mod keeper;
 pub mod link;
 pub mod names;
 pub mod peers;
@@ -181,13 +182,19 @@ pub async fn serve_on(
         callers,
     } = parts;
     let asker: std::sync::Arc<dyn access::Asker> = access.into();
-    let prover =
-        prover.unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())));
+    let prover: std::sync::Arc<dyn app_proof::AppProver> = prover
+        .unwrap_or_else(|| Box::new(app_proof::PeerProver::new(link.clone(), names.clone())))
+        .into();
     let guard = peers::RoleGuard::frontend(link.clone());
     let cast = screencast::ScreenCastService::new(chooser, restore)
         .with_display(display)
         .with_names(names.clone())
-        .with_prover(prover)
+        .with_prover(std::sync::Arc::clone(&prover))
+        .with_guard(guard.clone());
+    // Remote control remembers in the screen-sharing book, so there is one list and one revoke.
+    let remote = remote_desktop::RemoteDesktopService::new(Box::new(asker.clone()), eis)
+        .with_memory(cast.keeper(), prover)
+        .with_names(names.clone())
         .with_guard(guard.clone());
     let grants = cast.grants(peers::RoleGuard::settings(link.clone()), names.clone());
     let connection = builder
@@ -198,12 +205,7 @@ pub async fn serve_on(
         )?
         .serve_at(PORTAL_PATH, cast)?
         .serve_at(PORTAL_PATH, grants)?
-        .serve_at(
-            PORTAL_PATH,
-            remote_desktop::RemoteDesktopService::new(Box::new(asker.clone()), eis)
-                .with_names(names.clone())
-                .with_guard(guard.clone()),
-        )?
+        .serve_at(PORTAL_PATH, remote)?
         .serve_at(
             PORTAL_PATH,
             settings::SettingsService::new(appearance).with_guard(guard.clone()),

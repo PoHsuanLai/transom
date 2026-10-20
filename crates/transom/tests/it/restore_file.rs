@@ -1,10 +1,10 @@
 use std::os::unix::fs::PermissionsExt;
 
 use transom::screencast::restore::{FileStore, RestoreStore, StoreError};
-use transom_core::restore::Grant;
-use transom_core::{CastSource, Keep, RestoreBook, RestoreToken};
+use transom_core::restore::{Grant, InputGrant};
+use transom_core::{CastSource, DeviceKinds, Keep, RestoreBook, RestoreToken};
 
-fn book_of_two() -> RestoreBook {
+fn book_of_three() -> RestoreBook {
     let mut book = RestoreBook::new();
     book.remember(
         RestoreToken::mint([1; 16]),
@@ -27,6 +27,15 @@ fn book_of_two() -> RestoreBook {
             granted_at: 1_800_000_123,
         },
     );
+    book.remember_input(
+        RestoreToken::mint([3; 16]),
+        InputGrant {
+            app_id: "org.example.Remote".into(),
+            devices: DeviceKinds::from_wire(3),
+            keep: Keep::UntilRevoked,
+            granted_at: 1_800_000_456,
+        },
+    );
     book
 }
 
@@ -34,7 +43,7 @@ fn book_of_two() -> RestoreBook {
 fn awkward_text_survives_a_save_and_a_load() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = FileStore::new(dir.path().join("deeper").join("restore"));
-    let book = book_of_two();
+    let book = book_of_three();
     store.save(&book).expect("save creates the directory");
     assert_eq!(store.load().expect("load"), book);
     store.save(&RestoreBook::new()).expect("save an empty book");
@@ -45,7 +54,7 @@ fn awkward_text_survives_a_save_and_a_load() {
 fn the_file_is_private_to_its_owner() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = FileStore::new(dir.path().join("restore"));
-    store.save(&book_of_two()).expect("save");
+    store.save(&book_of_three()).expect("save");
     let mode = std::fs::metadata(store.path())
         .expect("metadata")
         .permissions()
@@ -90,7 +99,7 @@ fn a_flawed_line_loses_that_grant_only_and_the_file_is_kept_beside() {
     let text = format!(
         "{HEADER}\nnot-a-token\tapp\t2\t1\n{good}\tapp\t2\t1800000000\toutput:DP-1\n\
          {good}\n{good}\tapp\t9\t1\tdisplay:x\n{good}\tapp\t2\tsoon\n{good}\tapp\t2\t1\ttab:x\n\
-         {good}\tapp\t2\t1\toutput:bad\\q\n"
+         {good}\tapp\t2\t1\toutput:bad\\q\n{good}\tapp\t2\t1\tinput:0\n{good}\tapp\t2\t1\tinput:x\n"
     );
     std::fs::write(&path, &text).expect("write");
     let store = FileStore::new(path.clone());

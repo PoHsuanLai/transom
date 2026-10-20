@@ -83,11 +83,17 @@ impl ScreenCastService {
 
     /// This service remembering the apps `prover` shows to be what their ids say, and no others.
     /// Without it no app is remembered. Call it before the service is shared.
-    pub fn with_prover(mut self, prover: Box<dyn crate::app_proof::AppProver>) -> Self {
+    pub fn with_prover(mut self, prover: impl Into<Arc<dyn crate::app_proof::AppProver>>) -> Self {
         if let Some(shared) = Arc::get_mut(&mut self.shared) {
-            shared.prover = prover;
+            shared.prover = prover.into();
         }
         self
+    }
+
+    /// The book of what is remembered, for the remote-control interface to remember in too, so
+    /// there is one list and one way to take an app's access back.
+    pub fn keeper(&self) -> Arc<crate::keeper::Keeper> {
+        Arc::clone(&self.shared.keeper)
     }
 
     /// This service capturing on `display` (the connection the compositor hands this portal, when
