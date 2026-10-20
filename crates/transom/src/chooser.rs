@@ -56,9 +56,11 @@ pub trait Chooser: Send + Sync + std::fmt::Debug {
 
 /// The shell's side of the handshake, as the client sees it.
 ///
-/// `PickCaptureSource(app_label: s, kinds: u, multiple: u, cursor_modes: au) -> (sources: a(ss),
-/// cursor: u)`. `kinds` is the portal's bit set (1 display, 2 window); `multiple` is 0 for one
-/// source and 1 for several; each source is `("output", name)` or `("window", identifier)`; an
+/// `PickCaptureSource(app_label: s, kinds: u, multiple: u, cursor_modes: au, remembered: u) ->
+/// (sources: a(ss), cursor: u)`. `kinds` is the portal's bit set (1 display, 2 window); `multiple`
+/// is 0 for one source and 1 for several; `remembered` is how long a yes is kept, the portal's
+/// persist mode (0 asked every time, 1 until the app quits, 2 until taken back in Settings), so
+/// the picker can say so; each source is `("output", name)` or `("window", identifier)`; an
 /// empty list means the person cancelled. The shell lists what exists, so the call carries no
 /// candidates.
 ///
@@ -84,6 +86,7 @@ pub trait Shell1 {
         kinds: u32,
         multiple: u32,
         cursor_modes: Vec<u32>,
+        remembered: u32,
     ) -> zbus::Result<(Vec<(String, String)>, u32)>;
 
     /// Show the colour picker and wait for the answer: no tuple is a cancel, one tuple is the
@@ -136,6 +139,7 @@ impl Chooser for ShellChooser {
                     request.offer.kinds.to_wire(),
                     multiple_to_wire(request.offer.multiple),
                     cursor_modes,
+                    request.remembered.to_wire(),
                 ),
             )
             .await?;

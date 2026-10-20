@@ -13,7 +13,9 @@ use transom::screencast::restore::FileStore;
 use transom::screenshot::{ColorPicker, ShellColorPicker};
 use transom::settings::DesktopAppearance;
 use transom::{BUS_NAME, Parts, serve_on};
-use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, Offer, SourceKinds};
+use transom_core::{
+    CastSource, ChoiceRequest, CursorMode, Keep, Multiple, Offer, PersistMode, SourceKinds,
+};
 use zbus::message::Header;
 use zbus::names::BusName;
 use zbus::{Connection, fdo};
@@ -42,16 +44,24 @@ async fn from_portal(connection: &Connection, header: &Header<'_>) -> fdo::Resul
 
 #[zbus::interface(name = "org.quire.Shell1")]
 impl StandIn {
+    #[allow(clippy::too_many_arguments)] // the shell's own signature
     async fn pick_capture_source(
         &self,
         _app_label: String,
         _kinds: u32,
         _multiple: u32,
         _cursor_modes: Vec<u32>,
+        remembered: u32,
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
     ) -> fdo::Result<(Vec<(String, String)>, u32)> {
         from_portal(connection, &header).await?;
+        // The picker's sentence: `request()` asks to be kept until taken back.
+        if remembered != 2 {
+            return Err(fdo::Error::InvalidArgs(format!(
+                "remembered {remembered}, not 2"
+            )));
+        }
         Ok((vec![("output".to_owned(), "DP-1".to_owned())], 1))
     }
 
@@ -100,6 +110,7 @@ fn request() -> ChoiceRequest {
             cursor_modes: vec![CursorMode::Hidden],
         },
         app_label: "Meet".to_owned(),
+        remembered: PersistMode::Keep(Keep::UntilRevoked),
     }
 }
 
@@ -134,7 +145,7 @@ async fn the_portal_asks_the_shell_from_the_connection_that_owns_its_name() {
     let refused = Shell1Proxy::new(&stranger)
         .await
         .expect("a proxy")
-        .pick_capture_source("Meet", 1, 0, vec![1])
+        .pick_capture_source("Meet", 1, 0, vec![1], 2)
         .await;
     assert!(refused.is_err(), "a stranger must be refused: {refused:?}");
 

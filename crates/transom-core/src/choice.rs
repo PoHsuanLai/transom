@@ -3,6 +3,7 @@
 //! The chooser is a surface of the shell; this module only says what to offer and whether the
 //! answer is acceptable.
 
+use crate::restore::PersistMode;
 use crate::screencast::{CastSource, CursorMode};
 
 /// Which kinds of source an app asked for. Built from the portal's `types` bit set (1 display,
@@ -79,6 +80,9 @@ pub struct ChoiceRequest {
     /// The app's name as the person knows it (never a bundle or bus name), for the chooser's
     /// title.
     pub app_label: String,
+    /// What a yes will be kept for (`DoNot` for an app that is asked every time), so the
+    /// chooser can say so and the person never gives a lasting yes without being told.
+    pub remembered: PersistMode,
 }
 
 /// What the person picked.

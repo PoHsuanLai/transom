@@ -5,7 +5,9 @@ use transom::chooser::{
 };
 use transom::names::AppNames;
 use transom::screencast::Dict;
-use transom_core::{CastSource, ChoiceRequest, CursorMode, Multiple, Offer, SourceKinds};
+use transom_core::{
+    CastSource, ChoiceRequest, CursorMode, Multiple, Offer, PersistMode, SourceKinds,
+};
 use zbus::zvariant::{OwnedValue, Value};
 
 fn request() -> ChoiceRequest {
@@ -16,6 +18,7 @@ fn request() -> ChoiceRequest {
             cursor_modes: vec![CursorMode::Embedded],
         },
         app_label: "Meet".to_owned(),
+        remembered: PersistMode::DoNot,
     }
 }
 

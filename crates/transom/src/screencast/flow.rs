@@ -220,6 +220,11 @@ impl Shared {
         let request = ChoiceRequest {
             offer: selection.offer.clone(),
             app_label: self.names.label(&who.shown),
+            // Only a proven app's yes is kept (see `outcome`), so only its picker says so.
+            remembered: match who.proven {
+                Some(_) => selection.persist,
+                None => PersistMode::DoNot,
+            },
         };
         match unavailable_is_cancel(self.chooser.pick(&request).await) {
             Ok(Some(choice)) => match request.accept(choice.sources, choice.cursor) {

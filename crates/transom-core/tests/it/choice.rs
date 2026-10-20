@@ -1,5 +1,5 @@
 use transom_core::choice::{ChoiceRefusal, ChoiceRequest, Multiple, Offer, SourceKinds};
-use transom_core::{CastSource, CursorMode};
+use transom_core::{CastSource, CursorMode, PersistMode};
 
 fn out(name: &str) -> CastSource {
     CastSource::Output(name.to_owned())
@@ -17,6 +17,7 @@ fn request(kinds: SourceKinds, multiple: Multiple) -> ChoiceRequest {
             cursor_modes: vec![CursorMode::Hidden, CursorMode::Embedded],
         },
         app_label: "Meet".to_owned(),
+        remembered: PersistMode::DoNot,
     }
 }
 
