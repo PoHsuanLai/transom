@@ -191,7 +191,12 @@ impl RemoteDesktopService {
         let restored = self.restored_kinds(&asking, &who).await;
         let answer = if restored.is_empty() {
             let label = self.names.label(&who.shown);
-            let question = remote_control_question(&label, asking.kinds);
+            // Only a proven app's yes is kept (see `keep`), so only its question says so.
+            let remembered = match who.proven {
+                Some(_) => asking.persist,
+                None => PersistMode::DoNot,
+            };
+            let question = remote_control_question(&label, asking.kinds, remembered);
             self.asker.ask(&question).await
         } else {
             Ok(Answer::Granted)

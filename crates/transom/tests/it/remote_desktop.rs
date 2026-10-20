@@ -10,12 +10,14 @@ use transom::chooser::ShellError;
 use transom::keeper::{Keeper, unix_now};
 use transom::names::AppNames;
 use transom::peers::Tether;
-use transom::remote_desktop::{ConnectError, DeviceKinds, FakeEis, RemoteDesktopService};
+use transom::remote_desktop::{
+    ConnectError, DeviceKinds, FakeEis, RemoteDesktopService, remote_control_question,
+};
 use transom::screencast::Dict;
 use transom::screencast::options::{restore_data, restore_token};
 use transom::screencast::restore::MemoryStore;
 use transom::screencast::session::SessionKey;
-use transom_core::{Keep, RestoreToken};
+use transom_core::{Keep, PersistMode, RestoreToken};
 use zbus::zvariant::{OwnedValue, Value};
 
 use crate::app_proof::{REMOTE, REMOTE_ID, REMOTE_PROGRAM, names_with_entries, program};
@@ -507,4 +509,32 @@ async fn an_app_that_is_not_shown_to_be_what_it_says_is_asked_every_time() {
         1,
         "only the proven app is listed"
     );
+}
+
+#[test]
+fn the_control_question_says_how_long_a_yes_lasts() {
+    let table: &[(&str, PersistMode, Option<&str>)] = &[
+        ("asked every time", PersistMode::DoNot, None),
+        (
+            "while it runs",
+            PersistMode::Keep(Keep::WhileRunning),
+            Some("again without asking until it quits"),
+        ),
+        (
+            "until taken back",
+            PersistMode::Keep(Keep::UntilRevoked),
+            Some("until you take it back in Settings"),
+        ),
+    ];
+    for (name, remembered, says) in table {
+        let question = remote_control_question("Remote", DeviceKinds::ALL, *remembered);
+        match says {
+            Some(words) => assert!(question.body.contains(words), "{name}: {}", question.body),
+            None => assert!(
+                !question.body.contains("without asking"),
+                "{name}: {}",
+                question.body
+            ),
+        }
+    }
 }
