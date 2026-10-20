@@ -11,7 +11,7 @@ use transom::app_proof::{
     AppProof, AppProver, PeerProver, RootHeld, TrustAll, Why, judge_app, sender_of,
 };
 use transom::keeper::{Keeper, Kept, unix_now};
-use transom::names::{AppNames, exec_program};
+use transom::names::{AppNames, exec_program, listed};
 use transom::screencast::restore::MemoryStore;
 use transom_core::{CastSource, Keep};
 
@@ -43,6 +43,8 @@ pub const REMOTE_ID: &str = "org.example.FakeRemote";
 pub const REMOTE: &str = "[Desktop Entry]\nName=Fake Remote\nExec=fakeremote %u\n";
 pub const REMOTE_PROGRAM: &str = "/usr/share/fakeremote/fakeremote";
 const TWIN: &str = "[Desktop Entry]\nName=Twin\nExec=/usr/bin/twin\n";
+const REMOTE_LINK: &str = "[Desktop Entry]\nName=Fake Remote\nNoDisplay=true\nMimeType=x-scheme-handler/fakeremote;\nExec=fakeremote %u\n";
+const TWIN_GONE: &str = "[Desktop Entry]\nName=Twin\nHidden=true\nExec=/usr/bin/twin\n";
 
 pub fn program(path: &str) -> Standing {
     introduced_program(path).expect("a program standing")
@@ -165,6 +167,36 @@ fn the_program_of_an_exec_line() {
 }
 
 #[test]
+fn an_entry_the_menus_hide_is_not_listed() {
+    let table: &[(&str, &str, bool)] = &[
+        ("plain", "[Desktop Entry]\nExec=app\n", true),
+        (
+            "no display",
+            "[Desktop Entry]\nNoDisplay=true\nExec=app\n",
+            false,
+        ),
+        (
+            "hidden",
+            "[Desktop Entry]\nHidden = true\nExec=app\n",
+            false,
+        ),
+        (
+            "shown on purpose",
+            "[Desktop Entry]\nNoDisplay=false\nExec=app\n",
+            true,
+        ),
+        (
+            "another group's key",
+            "[Desktop Entry]\nExec=app\n[Desktop Action new]\nNoDisplay=true\n",
+            true,
+        ),
+    ];
+    for (name, text, want) in table {
+        assert_eq!(listed(text), *want, "{name}");
+    }
+}
+
+#[test]
 fn the_app_of_a_session_is_read_from_the_handle_the_frontend_made() {
     let table: &[(&str, Option<&str>)] = &[
         (SESSION, Some(":1.42")),
@@ -225,12 +257,14 @@ fn a_program_that_gives_no_id_is_told_by_the_one_entry_that_runs_it() {
     let (_dir, names) = names_with_entries(&[
         ("org.mozilla.firefox", FIREFOX),
         (REMOTE_ID, REMOTE),
+        ("org.example.FakeRemoteLink", REMOTE_LINK),
         ("org.example.TwinA", TWIN),
         ("org.example.TwinB", TWIN),
+        ("org.example.TwinGone", TWIN_GONE),
     ]);
     let table: Vec<(&str, Standing, AppProof)> = vec![
         (
-            "the one entry that runs it",
+            "the one listed entry that runs it (its hidden link handler does not count)",
             program(REMOTE_PROGRAM),
             AppProof::Proven(REMOTE_ID.to_owned()),
         ),
@@ -240,7 +274,7 @@ fn a_program_that_gives_no_id_is_told_by_the_one_entry_that_runs_it() {
             AppProof::Unproven(Why::NoEntryForProgram),
         ),
         (
-            "a program two entries run: nothing is guessed",
+            "a program two listed entries run (a deleted third aside): nothing is guessed",
             program("/usr/bin/twin"),
             AppProof::Unproven(Why::ProgramNotUnique),
         ),

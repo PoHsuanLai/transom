@@ -97,6 +97,9 @@ impl AppNames {
     /// The ids of the desktop entries, written by root, whose `Exec` program `runs` accepts: the
     /// way to tell which app a program is when it did not say.
     ///
+    /// Only entries the menus list count: one marked `NoDisplay` or `Hidden` is a helper (a link
+    /// handler that runs the same program as its app) or a deleted entry, not the app.
+    ///
     /// An id counts once, from the first data directory that has it (as for [`AppNames::registered`]).
     /// The search reads at most [`MAX_SCAN_ENTRIES`] entries and [`MAX_SCAN_BYTES`] bytes and then
     /// gives up, so a crowded or hostile folder cannot make it slow or wrong.
@@ -126,7 +129,10 @@ impl AppNames {
                 };
                 seen.insert(id.to_owned());
                 bytes = bytes.saturating_add(u64::try_from(text.len()).unwrap_or(u64::MAX));
-                if root.holds(&path) && exec_program(&text).is_some_and(|program| runs(&program)) {
+                if root.holds(&path)
+                    && listed(&text)
+                    && exec_program(&text).is_some_and(|program| runs(&program))
+                {
                     found.insert(id.to_owned());
                 }
             }
@@ -196,6 +202,23 @@ pub fn exec_program(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether a desktop entry's `[Desktop Entry]` group is one the menus list: not `NoDisplay=true`
+/// (a helper, such as a link handler) and not `Hidden=true` (deleted).
+pub fn listed(text: &str) -> bool {
+    let mut in_entry = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_entry = group == "Desktop Entry";
+        } else if in_entry && let Some((key, value)) = line.split_once('=') {
+            let hides = matches!(key.trim(), "NoDisplay" | "Hidden");
+            if hides && value.trim() == "true" {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// An id that is safe to turn into a file name: letters, digits, dot, dash, underscore.
