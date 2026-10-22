@@ -37,6 +37,7 @@ SHELL_XML = """<node><interface name="org.quire.Shell1">
   <method name="PickCaptureSource">
     <arg type="s" name="app_label" direction="in"/><arg type="u" name="kinds" direction="in"/>
     <arg type="u" name="multiple" direction="in"/><arg type="au" name="cursor_modes" direction="in"/>
+    <arg type="u" name="remembered" direction="in"/>
     <arg type="a(ss)" name="sources" direction="out"/><arg type="u" name="cursor" direction="out"/>
   </method>
   <method name="PickColor">
@@ -74,9 +75,12 @@ def fake_shell(log_path, answers):
                 log.write(f"ask label={label!r} title={title!r} grant={grant!r} deny={deny!r}\n")
             invocation.return_value(GLib.Variant("(u)", (access,)))
             return
-        label, kinds, multiple, modes = params.unpack()
+        label, kinds, multiple, modes, remembered = params.unpack()
         with open(log_path, "a") as log:
-            log.write(f"pick label={label!r} kinds={kinds} multiple={multiple} modes={modes}\n")
+            log.write(
+                f"pick label={label!r} kinds={kinds} multiple={multiple} modes={modes} "
+                f"remembered={remembered}\n"
+            )
         # The person picks one of the modes the app allows, the first unless told otherwise.
         mode = int(cursor) if cursor else (modes[0] if modes else 1)
         invocation.return_value(GLib.Variant("(a(ss)u)", (sources, mode)))
