@@ -152,3 +152,69 @@ async fn only_settings_lists_and_takes_back_what_is_remembered() {
         .expect("a list");
     assert!(listed.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_settings_lets_an_app_in_for_good_and_it_is_listed_and_taken_back_like_the_rest() {
+    let Some(portal) = portal_with_a_grant().await else {
+        return;
+    };
+    let settings = client(&portal.bus).await;
+    as_settings_at(&portal, &settings, Proof::Full);
+    let stranger = client(&portal.bus).await;
+    introduce(
+        &portal.peers,
+        &stranger,
+        introduced_program("/usr/bin/other"),
+    );
+    let new = "org.example.Remote";
+
+    // A stranger cannot let itself in.
+    assert!(is_refused(
+        &call(&stranger, GRANTS, "Allow", &(new, "every", 3_u32)).await
+    ));
+    assert_eq!(portal.store.load().expect("book").len(), 1);
+
+    // Settings can, and a bad screen choice or an empty app is refused.
+    for (app, screens) in [("", "every"), (new, "all of them"), (new, "output:")] {
+        assert!(
+            call(&settings, GRANTS, "Allow", &(app, screens, 3_u32))
+                .await
+                .is_err(),
+            "{app:?} {screens:?}"
+        );
+    }
+    assert!(
+        call(&settings, GRANTS, "Allow", &(new, "none", 0_u32))
+            .await
+            .is_err(),
+        "nothing to allow"
+    );
+    call(&settings, GRANTS, "Allow", &(new, "output:DP-1", 3_u32))
+        .await
+        .expect("settings may allow");
+    let book = portal.store.load().expect("book");
+    let live = [CastSource::Output("HDMI-1".to_owned())];
+    assert_eq!(
+        book.standing_sources(new, &live),
+        live,
+        "the first display stands in for one that is gone"
+    );
+
+    // It is listed with the rest, as until taken back, and one Revoke takes it back.
+    let listed: Listed = call(&settings, GRANTS, "ListGrants", &())
+        .await
+        .expect("answers")
+        .body()
+        .deserialize()
+        .expect("a list");
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().any(|row| (row.0.as_str(), row.2) == (new, 2)));
+    let gone: u32 = call(&settings, GRANTS, "Revoke", &(new,))
+        .await
+        .expect("answers")
+        .body()
+        .deserialize()
+        .expect("a count");
+    assert_eq!(gone, 1);
+    assert_eq!(portal.store.load().expect("book").len(), 1);
+}

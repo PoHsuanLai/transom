@@ -417,3 +417,20 @@ unknown caller. peephole v0.1.4 adds developer rows (`dev-rows`: `Table::from_to
   per frame or per retry: `DisplayName::route` is called from `Wire::open` only, and a frame that fails is asked for again on
   the same session. The one remaining second ask is `CasementLine`'s own pause-and-retry when casement says it is busy, which
   is for separate jobs arriving together. `Canceller` now cuts the whole job's connection.
+
+## Standing grants (RustDesk asked for the screen every time)
+
+- **Cause.** RustDesk 1.5.0 reads and sends `restore_token` but never `persist_mode`, so the frontend issues it no token, and
+  transom's book stayed empty for it. Checked from the strings of `librustdesk.so`; the live "asked every time" log line is
+  still to be read on the real login (run with `RUST_LOG=info`, connect from RustDesk, look for it).
+- **Fix.** The person lets an app in for good, in Settings: `org.quire.Portal1.Allow(app_id, screens, input)`, see
+  ARCHITECTURE "Letting an app in for good". Transom side done, with tests: core book and rules
+  (`transom-core/tests/it/restore.rs`), the file (`restore_file.rs`), the bus method and its guard (`grants.rs`), and the
+  no-ask path for input (`remote_desktop.rs`). The screen path in `Shared::restored` shares the lookup but has no
+  stand-alone test: it needs a live `capture::Job`; the real run covers it (dev/accept).
+- **Asks of other repos.** detent (Privacy page): a row per remembered app with "Let <name> share this screen without
+  asking" (screens: every display, or one by name; input on/off) calling `Allow`; the existing list and Remove button
+  already show and revoke it. sill (picker): for a proven app a "Don't ask again for <name>" box that makes the shell call
+  `Allow` after the yes. Neither is done.
+- **Residual.** An unproven app is never let in by it (as for tokens): if the live log shows RustDesk unproven (its server
+  runs under `sudo` in a logind session), the proof, not the grant, is what to fix next.

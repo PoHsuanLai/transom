@@ -487,6 +487,59 @@ async fn a_yes_to_remote_control_is_remembered_and_restored_for_the_same_devices
 }
 
 #[tokio::test]
+async fn what_the_person_let_an_app_do_for_good_needs_no_token_and_no_ask_to_be_remembered() {
+    let keeper = new_keeper();
+    let (service, asker, _dir) = remembering(REMOTE_PROGRAM, vec![Answer::Granted; 2], &keeper);
+
+    // Before the person says so, an app that never asks to be remembered is asked every time.
+    let (response, results) = begin_with(&service, 1, &types(3)).await;
+    assert_eq!(response, 0);
+    assert_eq!(asker.asked().len(), 1);
+    assert!(restore_token(&results).is_none(), "it asked for no token");
+
+    // Settings lets it in for keys and pointer: no token, no persist mode, and still not asked.
+    assert_eq!(
+        keeper
+            .allow(REMOTE_ID, None, DeviceKinds::from_wire(3))
+            .await,
+        Some(true)
+    );
+    let (response, results) = begin_with(&service, 2, &types(3)).await;
+    assert_eq!((response, devices_of(&results)), (0, Some(3)));
+    assert_eq!(asker.asked().len(), 1, "not asked");
+
+    // More than it was let do: asked.
+    begin_with(&service, 3, &types(7)).await;
+    assert_eq!(asker.asked().len(), 2);
+
+    // Taken back: asked again, and it is listed until then.
+    assert_eq!(keeper.remembered().await.len(), 1);
+    assert_eq!(keeper.revoke(REMOTE_ID).await, Some(1));
+    assert!(keeper.remembered().await.is_empty());
+}
+
+#[tokio::test]
+async fn an_app_that_is_not_shown_to_be_what_it_says_is_not_let_in_by_what_was_allowed_for_its_id()
+{
+    let keeper = new_keeper();
+    assert_eq!(
+        keeper
+            .allow(REMOTE_ID, None, DeviceKinds::from_wire(3))
+            .await,
+        Some(true)
+    );
+    let (stranger, asker, _dir) = remembering("/usr/bin/python3", vec![Answer::Granted], &keeper);
+    stranger.create(key(1), REMOTE_ID);
+    stranger.select(&key(1), &types(3));
+    stranger.begin(&key(1)).await;
+    assert_eq!(
+        asker.asked().len(),
+        1,
+        "a program that only says the id is asked"
+    );
+}
+
+#[tokio::test]
 async fn an_app_that_is_not_shown_to_be_what_it_says_is_asked_every_time() {
     let keeper = new_keeper();
     let (proven, _, _entries) = remembering(REMOTE_PROGRAM, vec![Answer::Granted], &keeper);

@@ -23,6 +23,7 @@ pub mod pacing;
 pub mod restore;
 pub mod screencast;
 pub mod settings_values;
+pub mod standing;
 
 pub use choice::{Choice, ChoiceRefusal, ChoiceRequest, Multiple, Offer, SourceKinds};
 pub use devices::{DEVICE_TYPES, DeviceKinds};
@@ -40,3 +41,4 @@ pub use settings_values::{
     Appearance, Contrast, Rgb, Scheme, SettingKey, SettingValue, SettingsRefusal, changes, read,
     read_all,
 };
+pub use standing::{Screens, StandingGrant};

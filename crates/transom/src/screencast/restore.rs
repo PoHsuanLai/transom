@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use transom_core::{DeviceKinds, Grant, InputGrant, Keep, RestoreBook, RestoreToken};
+use transom_core::{
+    DeviceKinds, Grant, InputGrant, Keep, RestoreBook, RestoreToken, Screens, StandingGrant,
+};
 
 use crate::chooser::source_from_wire;
 use crate::fsread::read_text;
@@ -162,9 +164,12 @@ impl FileStore {
 }
 
 /// The first line of the file; a different one is a file this version did not write.
-const HEADER: &str = "transom-restore 2";
+const HEADER: &str = "transom-restore 3";
 
-/// The first line of the version before this one, which kept no mode and no date.
+/// The header of the version before the standing grants; its lines read the same.
+const PREVIOUS_HEADER: &str = "transom-restore 2";
+
+/// The first line of the oldest version, which kept no mode and no date.
 const OLDER_HEADER: &str = "transom-restore 1";
 
 /// One grant per line: the token, the app, the persist mode (1 or 2), when it was given (seconds
@@ -203,6 +208,24 @@ fn encode(book: &RestoreBook) -> String {
         text.push_str(&grant.devices.to_wire().to_string());
         text.push('\n');
     }
+    for grant in book.standing() {
+        text.push_str("standing\t");
+        text.push_str(&escape(&grant.app_id));
+        text.push('\t');
+        text.push_str(&grant.granted_at.to_string());
+        text.push('\t');
+        text.push_str(&grant.input.to_wire().to_string());
+        text.push('\t');
+        match &grant.screens {
+            None => text.push_str("none"),
+            Some(Screens::Every) => text.push_str("every"),
+            Some(Screens::Named(name)) => {
+                text.push_str("named:");
+                text.push_str(&escape(name));
+            }
+        }
+        text.push('\n');
+    }
     text
 }
 
@@ -219,7 +242,7 @@ enum Decoded {
 fn decode(text: &str) -> Decoded {
     let mut lines = text.lines();
     match lines.next() {
-        Some(HEADER) => {}
+        Some(HEADER | PREVIOUS_HEADER) => {}
         Some(OLDER_HEADER) => return Decoded::OlderVersion,
         _ => return Decoded::Foreign,
     }
@@ -229,6 +252,7 @@ fn decode(text: &str) -> Decoded {
         match decode_line(line) {
             Some(Line::Screen(token, grant)) => book.remember(token, grant),
             Some(Line::Input(token, grant)) => book.remember_input(token, grant),
+            Some(Line::Standing(grant)) => book.allow(grant),
             None => skipped += 1,
         }
     }
@@ -241,9 +265,33 @@ enum Line {
     Screen(RestoreToken, Grant),
     /// A grant of remote control.
     Input(RestoreToken, InputGrant),
+    /// What the person let an app do without asking.
+    Standing(StandingGrant),
+}
+
+/// `standing`, the app, when, the input bits, then `none`, `every` or `named:<output>`.
+fn decode_standing(fields: &[&str]) -> Option<Line> {
+    let [app_id, granted_at, input, screens] = fields else {
+        return None;
+    };
+    let screens = match *screens {
+        "none" => None,
+        "every" => Some(Screens::Every),
+        other => Some(Screens::Named(unescape(other.strip_prefix("named:")?)?)),
+    };
+    StandingGrant::issue(
+        &unescape(app_id)?,
+        screens,
+        DeviceKinds::from_wire(input.parse().ok()?),
+        granted_at.parse().ok()?,
+    )
+    .map(Line::Standing)
 }
 
 fn decode_line(line: &str) -> Option<Line> {
+    if let Some(rest) = line.strip_prefix("standing\t") {
+        return decode_standing(&rest.split('\t').collect::<Vec<_>>());
+    }
     let mut fields = line.split('\t');
     let token = RestoreToken::parse(fields.next()?)?;
     let app_id = unescape(fields.next()?)?;

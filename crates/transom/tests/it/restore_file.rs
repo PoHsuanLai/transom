@@ -2,7 +2,9 @@ use std::os::unix::fs::PermissionsExt;
 
 use transom::screencast::restore::{FileStore, RestoreStore, StoreError};
 use transom_core::restore::{Grant, InputGrant};
-use transom_core::{CastSource, DeviceKinds, Keep, RestoreBook, RestoreToken};
+use transom_core::{
+    CastSource, DeviceKinds, Keep, RestoreBook, RestoreToken, Screens, StandingGrant,
+};
 
 fn book_of_three() -> RestoreBook {
     let mut book = RestoreBook::new();
@@ -62,7 +64,7 @@ fn the_file_is_private_to_its_owner() {
     assert_eq!(mode & 0o777, 0o600);
 }
 
-const HEADER: &str = "transom-restore 2";
+const HEADER: &str = "transom-restore 3";
 
 #[test]
 fn a_file_this_version_did_not_write_is_set_aside_and_reported_damaged() {
@@ -71,7 +73,7 @@ fn a_file_this_version_did_not_write_is_set_aside_and_reported_damaged() {
     for text in [
         String::new(),
         "something else\n".to_owned(),
-        "transom-restore 3\n".to_owned(),
+        "transom-restore 4\n".to_owned(),
     ] {
         std::fs::write(&path, &text).expect("write");
         let store = FileStore::new(path.clone());
@@ -143,4 +145,29 @@ fn a_fifo_or_a_huge_file_is_not_read_for_ever() {
         FileStore::new(path).load(),
         Err(StoreError::Damaged)
     ));
+}
+
+#[test]
+fn what_the_person_let_apps_do_survives_a_save_and_a_load_and_an_older_file_still_reads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = FileStore::new(dir.path().join("restore"));
+    let mut book = book_of_three();
+    for (app, screens, input) in [
+        ("org.example.Every", Some(Screens::Every), 3),
+        ("odd\tname", Some(Screens::Named("DP\t-1\n".into())), 0),
+        ("org.example.KeysOnly", None, 7),
+    ] {
+        book.allow(
+            StandingGrant::issue(app, screens, DeviceKinds::from_wire(input), 1_800_000_999)
+                .expect("a grant"),
+        );
+    }
+    store.save(&book).expect("save");
+    assert_eq!(store.load().expect("load"), book);
+
+    // The file of the version before reads the same, so nothing is dropped on upgrade.
+    let text = std::fs::read_to_string(store.path()).expect("text");
+    let older = text.replacen("transom-restore 3", "transom-restore 2", 1);
+    std::fs::write(store.path(), older).expect("write");
+    assert_eq!(store.load().expect("load"), book);
 }

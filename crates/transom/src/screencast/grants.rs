@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use transom_core::{DeviceKinds, Screens};
 use zbus::fdo;
 use zbus::message::Header;
 
@@ -57,6 +58,35 @@ impl GrantsService {
             .collect())
     }
 
+    /// Let `app_id` share the screen and take over input without asking, until it is taken back.
+    /// `screens` is `none`, `every` (every display) or `output:<name>` (that display, else the
+    /// first); `input` is the portal's device bit set, 0 for none. Replaces what the app had.
+    async fn allow(
+        &self,
+        app_id: &str,
+        screens: &str,
+        input: u32,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        self.guard.admit(&header).await?;
+        if app_id.is_empty() || app_id.len() > MAX_ID_BYTES {
+            return Err(fdo::Error::InvalidArgs("not an app".to_owned()));
+        }
+        let screens = screens_from_wire(screens)
+            .ok_or_else(|| fdo::Error::InvalidArgs("not a screen choice".to_owned()))?;
+        match self
+            .shared
+            .allow(app_id, screens, DeviceKinds::from_wire(input))
+            .await
+        {
+            Some(true) => Ok(()),
+            Some(false) => Err(fdo::Error::InvalidArgs("nothing to allow".to_owned())),
+            None => Err(fdo::Error::Failed(
+                "what is allowed could not be saved".to_owned(),
+            )),
+        }
+    }
+
     /// Take back everything remembered for `app_id`: it is asked again next time. Replies with how
     /// many grants went. A running share is not stopped.
     async fn revoke(&self, app_id: &str, #[zbus(header)] header: Header<'_>) -> fdo::Result<u32> {
@@ -69,6 +99,18 @@ impl GrantsService {
             None => Err(fdo::Error::Failed(
                 "what is remembered could not be changed".to_owned(),
             )),
+        }
+    }
+}
+
+/// The screens a call names: `none` is `Some(None)`, a bad word `None`.
+fn screens_from_wire(text: &str) -> Option<Option<Screens>> {
+    match text {
+        "none" => Some(None),
+        "every" => Some(Some(Screens::Every)),
+        other => {
+            let name = other.strip_prefix("output:").filter(|n| !n.is_empty())?;
+            (name.len() <= MAX_ID_BYTES).then(|| Some(Screens::Named(name.to_owned())))
         }
     }
 }

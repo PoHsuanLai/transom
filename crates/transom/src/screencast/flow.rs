@@ -321,11 +321,11 @@ impl Shared {
         }
     }
 
-    /// What a restore token stands for now: the sources it was given, if all still exist and the
-    /// grant has not expired. An app that is not shown to be what it says is never restored.
+    /// What the app may share without asking now: what its restore token stands for (the sources
+    /// it was given, if all still exist and the grant has not expired), else what the person let it
+    /// share for good. An app that is not shown to be what it says is never restored.
     async fn restored(&self, selection: &Selection, who: &Who, job: &Arc<Job>) -> Vec<CastSource> {
-        let (Some(token), Some(app_id)) = (selection.restore.as_ref(), who.proven.as_deref())
-        else {
+        let Some(app_id) = who.proven.as_deref() else {
             return Vec::new();
         };
         let job = Arc::clone(job);
@@ -334,12 +334,17 @@ impl Shared {
             .ok()
             .and_then(Result::ok)
             .unwrap_or_default();
-        let sources = self
-            .keeper
-            .book()
-            .await
-            .resolve(token, app_id, &live, unix_now());
-        if sources.iter().all(|s| selection.offer.kinds.offers(s)) {
+        let book = self.keeper.book().await;
+        let by_token = selection.restore.as_ref().map_or_else(Vec::new, |token| {
+            book.resolve(token, app_id, &live, unix_now())
+        });
+        // No token, or one that does not stand: the person may have let this app in for good.
+        let sources = if by_token.is_empty() {
+            book.standing_sources(app_id, &live)
+        } else {
+            by_token
+        };
+        if !sources.is_empty() && sources.iter().all(|s| selection.offer.kinds.offers(s)) {
             sources
         } else {
             Vec::new()
@@ -349,6 +354,17 @@ impl Shared {
     /// The apps the person has let share without asking again, off the async runtime.
     pub async fn remembered(self: &Arc<Self>) -> Vec<Remembered> {
         self.keeper.remembered().await
+    }
+
+    /// Let `app_id` share without asking, until the person takes it back; see
+    /// [`Keeper::allow`](crate::keeper::Keeper::allow).
+    pub async fn allow(
+        self: &Arc<Self>,
+        app_id: &str,
+        screens: Option<transom_core::Screens>,
+        input: transom_core::DeviceKinds,
+    ) -> Option<bool> {
+        self.keeper.allow(app_id, screens, input).await
     }
 
     /// Take back everything remembered for `app_id`; how many grants went, or `None` when the

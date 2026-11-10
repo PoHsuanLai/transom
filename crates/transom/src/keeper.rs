@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use transom_core::{
     CastSource, DeviceKinds, Grant, InputGrant, Keep, Remembered, RestoreBook, RestoreToken,
+    Screens, StandingGrant,
 };
 
 use crate::screencast::restore::{RestoreStore, StoreError};
@@ -128,6 +129,53 @@ impl Keeper {
             Ok(()) => Some(token),
             Err(error) => {
                 tracing::warn!(%error, "the restore tokens could not be saved");
+                None
+            }
+        }
+    }
+
+    /// Let `app_id` share `screens` and take over `input` without asking, until the person takes
+    /// it back. `Some(true)` when it was saved, `Some(false)` when nothing may be allowed (no
+    /// identity, or nothing asked for), `None` when the book could not be read or written.
+    pub async fn allow(
+        self: &Arc<Self>,
+        app_id: &str,
+        screens: Option<Screens>,
+        input: DeviceKinds,
+    ) -> Option<bool> {
+        let (this, app_id) = (Arc::clone(self), app_id.to_owned());
+        tokio::task::spawn_blocking(move || this.allow_now(&app_id, screens, input))
+            .await
+            .ok()
+            .flatten()
+    }
+
+    fn allow_now(
+        &self,
+        app_id: &str,
+        screens: Option<Screens>,
+        input: DeviceKinds,
+    ) -> Option<bool> {
+        let Some(grant) = StandingGrant::issue(app_id, screens, input, unix_now()) else {
+            return Some(false);
+        };
+        let _held = self.held();
+        let mut book = match self.store.load() {
+            Ok(book) => book,
+            Err(StoreError::Damaged) => {
+                tracing::error!("the saved grants were damaged and were set aside; starting anew");
+                RestoreBook::new()
+            }
+            Err(error) => {
+                tracing::error!(%error, "the saved grants could not be read, so nothing was allowed");
+                return None;
+            }
+        };
+        book.allow(grant);
+        match self.store.save(&book) {
+            Ok(()) => Some(true),
+            Err(error) => {
+                tracing::error!(%error, "what was allowed could not be saved");
                 None
             }
         }

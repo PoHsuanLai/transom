@@ -247,16 +247,19 @@ impl RemoteDesktopService {
     /// The kinds the earlier yes offered by `asking` covers, if it covers all those wanted; else
     /// none.
     async fn restored_kinds(&self, asking: &Asking, who: &Who) -> DeviceKinds {
-        let (Some(memory), Some(token), Some(app_id)) =
-            (&self.memory, asking.restore.as_ref(), who.proven.as_deref())
-        else {
+        let (Some(memory), Some(app_id)) = (&self.memory, who.proven.as_deref()) else {
             return DeviceKinds::NONE;
         };
-        memory
-            .keeper
-            .book()
-            .await
-            .resolve_input(token, app_id, asking.kinds, unix_now())
+        let book = memory.keeper.book().await;
+        let by_token = asking.restore.as_ref().map_or(DeviceKinds::NONE, |token| {
+            book.resolve_input(token, app_id, asking.kinds, unix_now())
+        });
+        if by_token.is_empty() {
+            // No token, or one that does not stand: the person may have let this app in for good.
+            book.standing_devices(app_id, asking.kinds)
+        } else {
+            by_token
+        }
     }
 
     /// Remember the yes when the app asked to be remembered and is shown to be what it says, and

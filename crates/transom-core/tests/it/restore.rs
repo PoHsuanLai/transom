@@ -4,6 +4,7 @@ use transom_core::{
     CastSource, CursorMode, DeviceKinds, Keep, MAX_GRANTS, PersistMode, Remembered, RestoreBook,
     RestoreToken, UNTIL_REVOKED_SECS, WHILE_RUNNING_SECS,
 };
+use transom_core::{Screens, StandingGrant};
 
 const NOW: u64 = 1_800_000_000;
 
@@ -313,4 +314,78 @@ fn a_remote_control_grant_is_remembered_like_a_shared_screen() {
         "one revoke takes back both"
     );
     assert!(book.is_empty());
+}
+
+fn standing(app: &str, screens: Option<Screens>, input: u32) -> StandingGrant {
+    StandingGrant::issue(app, screens, DeviceKinds::from_wire(input), NOW).expect("a grant")
+}
+
+#[test]
+fn a_standing_grant_names_displays_by_rule_and_never_a_window() {
+    let live = [out("A"), CastSource::Window("w".into()), out("B")];
+    let table = [
+        ("every", Screens::Every, vec![out("A"), out("B")]),
+        ("named", Screens::Named("B".into()), vec![out("B")]),
+        (
+            "gone: the first",
+            Screens::Named("Z".into()),
+            vec![out("A")],
+        ),
+    ];
+    for (name, rule, want) in table {
+        assert_eq!(rule.pick(&live), want, "{name}");
+    }
+    assert!(
+        Screens::Every
+            .pick(&[CastSource::Window("w".into())])
+            .is_empty()
+    );
+    assert!(Screens::Named("A".into()).pick(&[]).is_empty());
+}
+
+#[test]
+fn a_standing_grant_needs_an_identity_and_something_to_allow() {
+    let keys = DeviceKinds::from_wire(1);
+    assert!(StandingGrant::issue("", Some(Screens::Every), keys, NOW).is_none());
+    assert!(StandingGrant::issue("app", None, DeviceKinds::NONE, NOW).is_none());
+    assert!(StandingGrant::issue("app", None, keys, NOW).is_some());
+}
+
+#[test]
+fn a_standing_grant_does_not_run_out_covers_what_it_was_given_and_goes_with_a_revoke() {
+    let app = "org.example.Remote";
+    let mut book = RestoreBook::new();
+    book.allow(standing(app, Some(Screens::Every), 3));
+    let live = [out("A")];
+    // Long past any token's limit, it still stands (the book is pruned at a far later time too).
+    book.prune(NOW + 10 * UNTIL_REVOKED_SECS);
+    assert_eq!(book.standing_sources(app, &live), live.to_vec());
+    assert_eq!(
+        book.standing_devices(app, DeviceKinds::from_wire(1)),
+        DeviceKinds::from_wire(3)
+    );
+    assert_eq!(
+        book.standing_devices(app, DeviceKinds::from_wire(7)),
+        DeviceKinds::NONE
+    );
+    assert!(book.standing_sources("org.example.Other", &live).is_empty());
+    assert!(book.standing_sources("", &live).is_empty());
+
+    // Input only: no screen without asking.
+    book.allow(standing("org.example.Keys", None, 3));
+    assert!(book.standing_sources("org.example.Keys", &live).is_empty());
+
+    // Listed once as until taken back, with a token grant of the same app merged into one line.
+    book.remember(
+        RestoreToken::mint([1; 16]),
+        grant(app, Keep::WhileRunning, NOW),
+    );
+    let listed = book.remembered(NOW);
+    let line = listed.iter().find(|r| r.app_id == app).expect("listed");
+    assert_eq!(line.keep, Keep::UntilRevoked);
+    assert_eq!(listed.len(), 2);
+
+    // One revoke takes both kinds back.
+    assert_eq!(book.forget_app(app), 2);
+    assert!(book.standing_sources(app, &live).is_empty());
 }

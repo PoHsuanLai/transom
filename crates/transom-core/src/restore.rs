@@ -10,6 +10,7 @@ use std::fmt;
 
 use crate::devices::DeviceKinds;
 use crate::screencast::CastSource;
+use crate::standing::StandingGrant;
 
 /// How long a stored grant is remembered. The wire values are the portal's: 1 and 2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -210,6 +211,8 @@ pub struct Remembered {
 pub struct RestoreBook {
     grants: BTreeMap<RestoreToken, Grant>,
     inputs: BTreeMap<RestoreToken, InputGrant>,
+    /// What the person let an app do without asking, by app id. Never expires.
+    standing: BTreeMap<String, StandingGrant>,
 }
 
 impl RestoreBook {
@@ -227,6 +230,37 @@ impl RestoreBook {
     /// token.
     pub fn remember_input(&mut self, token: RestoreToken, grant: InputGrant) {
         self.inputs.insert(token, grant);
+    }
+
+    /// Remember what the person let an app do without asking, replacing what it had.
+    pub fn allow(&mut self, grant: StandingGrant) {
+        self.standing.insert(grant.app_id.clone(), grant);
+    }
+
+    /// The standing grants, by app id (for a store to write).
+    pub fn standing(&self) -> impl Iterator<Item = &StandingGrant> {
+        self.standing.values()
+    }
+
+    /// The displays `app_id` may share without asking, among the `live` sources: empty when it has
+    /// no standing grant for the screen, `app_id` is empty, or there is no display.
+    pub fn standing_sources(&self, app_id: &str, live: &[CastSource]) -> Vec<CastSource> {
+        match self.standing.get(app_id) {
+            Some(StandingGrant {
+                screens: Some(rule),
+                ..
+            }) if !app_id.is_empty() => rule.pick(live),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The input `app_id` may take over without asking when it wants `wanted`: all it was given,
+    /// or none, so an app cannot grow what it was allowed.
+    pub fn standing_devices(&self, app_id: &str, wanted: DeviceKinds) -> DeviceKinds {
+        match self.standing.get(app_id) {
+            Some(grant) if !app_id.is_empty() && grant.input.covers(wanted) => grant.input,
+            _ => DeviceKinds::NONE,
+        }
     }
 
     /// Forget a token of either kind (the person took the access back, or the app asked for a
@@ -293,7 +327,7 @@ impl RestoreBook {
         let before = self.len();
         self.grants.retain(|_, grant| grant.valid_at(now));
         self.inputs.retain(|_, grant| grant.valid_at(now));
-        let surplus = self.len().saturating_sub(MAX_GRANTS);
+        let surplus = (self.grants.len() + self.inputs.len()).saturating_sub(MAX_GRANTS);
         if surplus > 0 {
             let mut by_age: Vec<(u64, RestoreToken)> = self
                 .grants
@@ -327,8 +361,12 @@ impl RestoreBook {
             .values()
             .filter(|g| g.valid_at(now))
             .map(|g| (g.app_id.as_str(), g.granted_at, g.keep));
+        let standing = self
+            .standing
+            .values()
+            .map(|g| (g.app_id.as_str(), g.granted_at, Keep::UntilRevoked));
         let mut by_app: BTreeMap<&str, Remembered> = BTreeMap::new();
-        for (app_id, granted_at, keep) in screens.chain(inputs) {
+        for (app_id, granted_at, keep) in screens.chain(inputs).chain(standing) {
             let entry = by_app.entry(app_id).or_insert_with(|| Remembered {
                 app_id: app_id.to_owned(),
                 granted_at,
@@ -346,6 +384,7 @@ impl RestoreBook {
         let before = self.len();
         self.grants.retain(|_, grant| grant.app_id != app_id);
         self.inputs.retain(|_, grant| grant.app_id != app_id);
+        self.standing.remove(app_id);
         before - self.len()
     }
 
@@ -359,13 +398,13 @@ impl RestoreBook {
         self.inputs.iter()
     }
 
-    /// How many grants of either kind are remembered.
+    /// How many grants are remembered, tokens and standing grants together.
     pub fn len(&self) -> usize {
-        self.grants.len() + self.inputs.len()
+        self.grants.len() + self.inputs.len() + self.standing.len()
     }
 
     /// Whether the book is empty.
     pub fn is_empty(&self) -> bool {
-        self.grants.is_empty() && self.inputs.is_empty()
+        self.grants.is_empty() && self.inputs.is_empty() && self.standing.is_empty()
     }
 }
