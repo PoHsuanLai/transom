@@ -10,7 +10,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 # The same floor as the rest of the program; the toolchain itself is pinned in rust-toolchain.toml.
 rust-version = "1.92"
-repository = "https://github.com/PoHsuanLai/transom"
+repository = "https://github.com/Bardo-DE/transom"
 publish = false
 
 [workspace.dependencies]
@@ -36,7 +36,7 @@ image = { version = "0.25.6", default-features = false, features = ["png"] }
 # zbus runs on tokio here, so the default executor feature is off. `fake` is a dev-only addition; `dev-rows`
 # (a person's own rows file, `Proof::Dev`) is only behind the transom crate's `debug` feature, so no shipped
 # build has it.
-peephole-bus = { git = "https://github.com/PoHsuanLai/peephole", tag = "v0.1.9", default-features = false, features = ["tokio", "desktop"] }
+peephole-bus = { git = "https://github.com/Bardo-DE/peephole", tag = "v0.1.9", default-features = false, features = ["tokio", "desktop"] }
 proptest = "1"
 tempfile = "3"
 

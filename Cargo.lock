@@ -691,7 +691,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 [[package]]
 name = "peephole"
 version = "0.1.9"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
+source = "git+https://github.com/Bardo-DE/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
 dependencies = [
  "nix",
  "peephole-core",
@@ -702,7 +702,7 @@ dependencies = [
 [[package]]
 name = "peephole-bus"
 version = "0.1.9"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
+source = "git+https://github.com/Bardo-DE/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
 dependencies = [
  "futures-timer",
  "peephole",
@@ -715,7 +715,7 @@ dependencies = [
 [[package]]
 name = "peephole-core"
 version = "0.1.9"
-source = "git+https://github.com/PoHsuanLai/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
+source = "git+https://github.com/Bardo-DE/peephole?tag=v0.1.9#f22e99b447d1ef7f84d81ddce6ceb614088ee0ef"
 dependencies = [
  "serde",
  "thiserror",
